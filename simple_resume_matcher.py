@@ -367,6 +367,39 @@ class LMStudioProvider(LLMProvider):
             return models[0]
         else:
             return "local-model"
+
+    def get_model_capabilities(self, model_name: str = None) -> dict:
+        """Get model capabilities including token limits"""
+        if model_name is None:
+            model_name = self.get_default_model()
+        
+        # Updated limits based on your increased context length
+        default_limits = {
+            "google/gemma-3-27b": {"max_input_tokens": 60000, "max_total_tokens": 70000},  # Conservative for your 71k limit
+            "mistralai/mistral-small-3.2": {"max_input_tokens": 60000, "max_total_tokens": 70000},  # Conservative for your 71k limit
+            "phi-4-reasoning-plus-mlx": {"max_input_tokens": 4000, "max_total_tokens": 4096},
+        }
+        
+        # Try to get actual model info from LM Studio
+        try:
+            response = self.session.get(f"{self.base_url}/v1/models", timeout=60)  # 1 minute for model info
+            response.raise_for_status()
+            models_data = response.json()
+            
+            for model in models_data.get("data", []):
+                if model["id"] == model_name:
+                    # Use more conservative limits to avoid overwhelming the model
+                    return default_limits.get(model_name, {"max_input_tokens": 4000, "max_total_tokens": 4096})
+        except Exception as e:
+            print(f"⚠️  Could not get model capabilities: {e}")
+        
+        # Fallback to default limits
+        return default_limits.get(model_name, {"max_input_tokens": 4000, "max_total_tokens": 4096})
+
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (rough approximation)"""
+        # Rough approximation: 1 token ≈ 4 characters for English text
+        return len(text) // 4
     
     def generate(self, prompt: str, **kwargs) -> dict:
         """Generate text using LM Studio API"""
@@ -382,7 +415,7 @@ class LMStudioProvider(LLMProvider):
         }
         
         try:
-            response = self.session.post(url, json=payload, timeout=300)
+            response = self.session.post(url, json=payload, timeout=180)  # 3 minutes timeout for requests
             response.raise_for_status()
             result = response.json()
             return {"response": result["choices"][0]["message"]["content"]}
@@ -420,17 +453,50 @@ class LLMClient:
         """Get default model from current provider"""
         return self.provider.get_default_model()
     
+    def get_model_capabilities(self, model_name: str = None) -> dict:
+        """Get model capabilities including token limits"""
+        if hasattr(self.provider, 'get_model_capabilities'):
+            return self.provider.get_model_capabilities(model_name)
+        else:
+            # Fallback for providers that don't support this
+            return {"max_input_tokens": 4000, "max_total_tokens": 4096}
+    
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text"""
+        if hasattr(self.provider, 'estimate_tokens'):
+            return self.provider.estimate_tokens(text)
+        else:
+            # Fallback approximation
+            return len(text) // 4
+    
     def generate(self, prompt: str, **kwargs) -> dict:
         """Generate text using current provider"""
         return self.provider.generate(prompt, **kwargs)
     
-    def validate_connection(self) -> bool:
+    def validate_connection(self, specified_model: str = None) -> bool:
         """Test provider connectivity and model availability"""
         try:
             models = self.get_available_models()
             default_model = self.get_default_model()
             print(f"✅ {self.provider_type} connected, {len(models)} models available")
-            print(f"🤖 Default model: {default_model}")
+            
+            # Show the model that will actually be used
+            if specified_model:
+                print(f"🤖 Using specified model: {specified_model}")
+            else:
+                print(f"🤖 Default model: {default_model}")
+            
+            # Test a simple generation to ensure the model is actually working
+            if self.provider_type == "lmstudio":
+                print("🧪 Testing model generation capability...")
+                test_response = self.generate("Say 'Hello, world!'", max_tokens=10)
+                if test_response and "response" in test_response:
+                    print("✅ Model generation test successful")
+                    return True
+                else:
+                    print("❌ Model generation test failed")
+                    return False
+            
             return True
         except Exception as e:
             print(f"❌ {self.provider_type} connection failed: {e}")
@@ -1786,7 +1852,7 @@ class SimpleResumeMatcher:
         )
 
         # Validate provider connection
-        if not self.llm_client.validate_connection():
+        if not self.llm_client.validate_connection(self.model_name):
             self._show_provider_setup_instructions(provider_type)
             sys.exit(1)
     
@@ -1885,7 +1951,7 @@ class SimpleResumeMatcher:
 
     def extract_keywords(self, text: str, context: str = "resume") -> List[str]:
         """
-        Extract keywords from text using LLM.
+        Extract keywords from text using LLM with intelligent chunking.
 
         Args:
             text: Text to extract keywords from
@@ -1896,25 +1962,329 @@ class SimpleResumeMatcher:
         """
         print(f"🔑 Extracting keywords from {context}...")
 
+        # Test if the model is working with a simple request first
+        if not self._test_model_availability():
+            print(f"  ❌ Model is not responding properly")
+            print(f"  🔄 Falling back to basic keyword extraction")
+            return self._extract_basic_keywords(text, context)
+
+        # Always use chunking approach to preserve all content
+        try:
+            print(f"  🔄 Using intelligent chunking approach")
+            keywords = self._extract_keywords_intelligent_chunking(text, context)
+            if keywords:
+                print(f"  ✅ Success with {len(keywords)} keywords")
+                return keywords
+        except Exception as e:
+            print(f"  ❌ Chunking failed: {e}")
+            print(f"  🔄 Falling back to basic keyword extraction")
+            return self._extract_basic_keywords(text, context)
+
+    def _extract_keywords_full_text(self, text: str, context: str) -> List[str]:
+        """Extract keywords using full text approach"""
+        # Drastically reduce text size to avoid token limits
+        max_chars = 800  # Much smaller to stay well under token limits
+        short_text = text[:max_chars] + "..." if len(text) > max_chars else text
+        
         prompt = f"""
-        Extract the most important keywords and skills from this {context} text.
-        Focus on technical skills, tools, technologies, and key competencies.
-
-        {text}
-
-        Return only a comma-separated list of keywords, no other text.
+        Extract keywords from this {context}:
+        {short_text}
+        
+        Return only a comma-separated list of keywords.
         """
 
-        try:
-            response = self.llm_client.generate(
-                model=self.model_name, prompt=prompt, temperature=0.1
-            )
+        # Try multiple models if available
+        models_to_try = [self.model_name, "mistralai/mistral-small-3.2", "phi-4-reasoning-plus-mlx"]
+        
+        for model in models_to_try:
+            try:
+                response = self.llm_client.generate(
+                    model=model, prompt=prompt, temperature=0.1, max_tokens=200
+                )
 
-            keywords = [kw.strip() for kw in response["response"].split(",")]
-            return [kw for kw in keywords if kw and len(kw) > 2]
+                keywords = [kw.strip() for kw in response["response"].split(",")]
+                result = [kw for kw in keywords if kw and len(kw) > 2]
+                
+                if result:
+                    return result
+            except Exception as e:
+                print(f"    ⚠️  Model {model} failed: {e}")
+                continue
+        
+        raise Exception("All models failed for full text extraction")
+
+    def _extract_keywords_intelligent_chunking(self, text: str, context: str) -> List[str]:
+        """Extract keywords using intelligent chunking that preserves all content"""
+        
+        # Get model capabilities to determine optimal chunk sizes
+        model_caps = self.llm_client.get_model_capabilities()
+        max_input_tokens = model_caps.get("max_input_tokens", 4000)
+        
+        # Use more conservative chunking to avoid overwhelming the model
+        # Resume Matcher approach: smaller chunks, more focused processing
+        max_chars_per_chunk = 2000  # Much smaller chunks for better reliability
+        
+        print(f"    📊 Using conservative chunking: ~{max_chars_per_chunk} chars per chunk")
+        
+        # Split text into logical sections based on common resume structure
+        sections = self._split_into_sections(text, context)
+        
+        all_keywords = []
+        total_sections = len(sections)
+        
+        print(f"    📄 Processing {total_sections} sections...")
+        
+        for i, section in enumerate(sections, 1):
+            if not section.strip():
+                continue
+                
+            print(f"    🔄 Processing section {i}/{total_sections} ({len(section)} chars)")
+            
+            # Always split into smaller chunks for better reliability
+            if len(section) > max_chars_per_chunk:
+                sub_chunks = self._split_large_section(section, max_chars_per_chunk)
+                for j, sub_chunk in enumerate(sub_chunks, 1):
+                    try:
+                        keywords = self._extract_keywords_from_chunk(sub_chunk, f"{context} section {i}.{j}")
+                        all_keywords.extend(keywords)
+                    except Exception as e:
+                        print(f"      ⚠️  Sub-chunk {i}.{j} failed: {e}")
+                        # Continue processing other chunks even if one fails
+                        continue
+            else:
+                try:
+                    keywords = self._extract_keywords_from_chunk(section, f"{context} section {i}")
+                    all_keywords.extend(keywords)
+                except Exception as e:
+                    print(f"      ⚠️  Section {i} failed: {e}")
+                    continue
+        
+        # Remove duplicates and return
+        unique_keywords = list(set(all_keywords))
+        print(f"    📊 Extracted {len(unique_keywords)} unique keywords from {total_sections} sections")
+        return unique_keywords
+
+    def _split_into_sections(self, text: str, context: str) -> List[str]:
+        """Split text into logical sections based on content type"""
+        sections = []
+        
+        if context == "resume":
+            # Split resume by common section headers
+            lines = text.split('\n')
+            current_section = []
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Check if this is a section header
+                if self._is_section_header(line):
+                    if current_section:
+                        sections.append('\n'.join(current_section))
+                        current_section = []
+                current_section.append(line)
+            
+            # Add the last section
+            if current_section:
+                sections.append('\n'.join(current_section))
+        else:
+            # For job descriptions, split by paragraphs
+            paragraphs = text.split('\n\n')
+            for para in paragraphs:
+                if para.strip():
+                    sections.append(para.strip())
+        
+        return sections
+
+    def _is_section_header(self, line: str) -> bool:
+        """Check if a line is likely a resume section header"""
+        line_upper = line.upper()
+        headers = [
+            'EXPERIENCE', 'WORK EXPERIENCE', 'EMPLOYMENT', 'CAREER',
+            'EDUCATION', 'ACADEMIC', 'DEGREE', 'UNIVERSITY', 'COLLEGE',
+            'SKILLS', 'TECHNICAL SKILLS', 'COMPETENCIES', 'EXPERTISE',
+            'PROJECTS', 'PORTFOLIO', 'ACHIEVEMENTS', 'ACCOMPLISHMENTS',
+            'CERTIFICATIONS', 'CERTIFICATES', 'TRAINING', 'AWARDS',
+            'SUMMARY', 'PROFILE', 'OBJECTIVE', 'ABOUT', 'INTRODUCTION'
+        ]
+        
+        return any(header in line_upper for header in headers)
+
+    def _split_large_section(self, section: str, max_chars: int = 800) -> List[str]:
+        """Split large sections into smaller chunks while preserving context"""
+        if len(section) <= max_chars:
+            return [section]
+        
+        # Split by sentences or bullet points
+        sentences = section.split('. ')
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            sentence_length = len(sentence)
+            if current_length + sentence_length > max_chars and current_chunk:
+                chunks.append('. '.join(current_chunk) + '.')
+                current_chunk = [sentence]
+                current_length = sentence_length
+            else:
+                current_chunk.append(sentence)
+                current_length += sentence_length
+        
+        if current_chunk:
+            chunks.append('. '.join(current_chunk))
+        
+        return chunks
+
+    def _test_model_availability(self) -> bool:
+        """Test if the model can handle simple requests"""
+        try:
+            print(f"    🧪 Testing {self.model_name} availability...")
+            start_time = time.time()
+            test_prompt = "Extract keywords from: Python, JavaScript, React. Return comma-separated list."
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=test_prompt, temperature=0.1, max_tokens=50
+            )
+            elapsed_time = time.time() - start_time
+            
+            if response and "response" in response and response["response"].strip():
+                print(f"    ✅ {self.model_name} test successful in {elapsed_time:.1f}s")
+                return True
+            else:
+                print(f"    ⚠️  {self.model_name} test returned empty response in {elapsed_time:.1f}s")
+                return False
+                
         except Exception as e:
-            print(f"❌ Error extracting keywords: {e}")
-            return []
+            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+            error_msg = str(e)
+            
+            print(f"    ⚠️  {self.model_name} availability test failed after {elapsed_time:.1f}s")
+            print(f"       Error: {error_msg}")
+            
+            # Check if it's a timeout vs actual error
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"    ⚠️  Model test timed out, but continuing anyway...")
+                return True  # Assume model is available if it's just a timeout
+            elif "500" in error_msg:
+                print(f"    ❌ Model returned 500 error - model is not working")
+                return False
+            else:
+                print(f"    ⚠️  Model test failed with unknown error, but continuing...")
+                return True  # Continue anyway for other errors
+
+    def _extract_keywords_from_chunk(self, chunk: str, context: str) -> List[str]:
+        """Extract keywords from a single chunk"""
+        prompt = f"""
+        Extract the most important technical skills, tools, and technologies from this {context}.
+        Focus on programming languages, frameworks, platforms, methodologies, and key competencies.
+        Avoid generic terms and focus on specific technical skills.
+
+        {chunk}
+        
+        Return only a comma-separated list of the most relevant keywords.
+        """
+        
+        # Try the specified model with retries
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                print(f"      🤖 Trying {self.model_name} (attempt {attempt + 1}/{max_retries})...")
+                start_time = time.time()
+                response = self.llm_client.generate(
+                    model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=200
+                )
+                elapsed_time = time.time() - start_time
+                
+                keywords = [kw.strip() for kw in response["response"].split(",")]
+                result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]  # Filter out very long keywords
+                
+                if result:
+                    print(f"      ✅ {self.model_name} succeeded in {elapsed_time:.1f}s")
+                    return result
+                else:
+                    print(f"      ⚠️  {self.model_name} returned empty keywords after {elapsed_time:.1f}s")
+                    
+            except Exception as e:
+                elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+                error_msg = str(e)
+                
+                # Detailed error logging
+                if "500" in error_msg:
+                    print(f"      ❌ {self.model_name} returned 500 error after {elapsed_time:.1f}s")
+                    print(f"         Error details: {error_msg}")
+                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    print(f"      ⏱️  {self.model_name} timed out after {elapsed_time:.1f}s")
+                elif "400" in error_msg:
+                    print(f"      ⚠️  {self.model_name} returned 400 error after {elapsed_time:.1f}s")
+                    print(f"         Error details: {error_msg}")
+                elif "connection" in error_msg.lower():
+                    print(f"      🔌 {self.model_name} connection error after {elapsed_time:.1f}s")
+                    print(f"         Error details: {error_msg}")
+                else:
+                    print(f"      ❓ {self.model_name} failed after {elapsed_time:.1f}s")
+                    print(f"         Error details: {error_msg}")
+                
+                if attempt < max_retries - 1:
+                    print(f"      🔄 Retrying...")
+                else:
+                    print(f"      ❌ All retries failed for {self.model_name}")
+        
+        # If all retries fail, fall back to basic keyword extraction
+        print(f"      🔧 Falling back to basic keyword extraction...")
+        return self._extract_basic_keywords(chunk, context)
+
+    def _extract_keywords_simple(self, text: str, context: str) -> List[str]:
+        """Extract keywords using simplified approach"""
+        # Take first 1000 characters to reduce prompt size
+        short_text = text[:1000] + "..." if len(text) > 1000 else text
+        
+        prompt = f"""
+        Extract keywords from this {context}:
+        {short_text}
+        
+        Return only a comma-separated list of keywords.
+        """
+
+        response = self.llm_client.generate(
+            model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=200
+        )
+
+        keywords = [kw.strip() for kw in response["response"].split(",")]
+        return [kw for kw in keywords if kw and len(kw) > 2]
+
+    def _extract_keywords_fallback(self, text: str, context: str) -> List[str]:
+        """Extract keywords using minimal approach"""
+        prompt = f"Extract keywords from: {text[:500]}... Return comma-separated list."
+
+        response = self.llm_client.generate(
+            model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=100
+        )
+
+        keywords = [kw.strip() for kw in response["response"].split(",")]
+        return [kw for kw in keywords if kw and len(kw) > 2]
+
+    def _extract_basic_keywords(self, text: str, context: str) -> List[str]:
+        """Extract basic keywords using simple text processing"""
+        # Common technical keywords to look for
+        tech_keywords = [
+            'python', 'javascript', 'java', 'c++', 'c#', 'sql', 'html', 'css', 
+            'react', 'angular', 'vue', 'node.js', 'docker', 'kubernetes', 'aws', 
+            'azure', 'gcp', 'git', 'github', 'agile', 'scrum', 'devops', 'ci/cd',
+            'machine learning', 'ai', 'data science', 'analytics', 'database',
+            'api', 'rest', 'graphql', 'microservices', 'cloud', 'linux', 'unix',
+            'windows', 'macos', 'mobile', 'ios', 'android', 'web', 'frontend',
+            'backend', 'fullstack', 'testing', 'qa', 'security', 'networking'
+        ]
+        
+        text_lower = text.lower()
+        found_keywords = []
+        
+        for keyword in tech_keywords:
+            if keyword in text_lower:
+                found_keywords.append(keyword)
+        
+        return found_keywords[:20]  # Limit to top 20
 
     def calculate_similarity(
         self, resume_keywords: List[str], job_keywords: List[str]
@@ -1962,29 +2332,9 @@ class SimpleResumeMatcher:
         """
         print("🚀 Improving resume to match job requirements...")
 
-        prompt = f"""
-        You are an expert resume writer. Improve this resume to better match the job description.
-
-        Job Description:
-        {job_description}
-
-        Job Keywords: {', '.join(job_keywords)}
-
-        Current Resume:
-        {resume_text}
-
-        Current Resume Keywords: {', '.join(resume_keywords)}
-
-        Instructions:
-        1. Naturally incorporate relevant job keywords into the resume
-        2. Rewrite sections to better align with job requirements
-        3. Add relevant skills and experiences if implied
-        4. Maintain professional tone and avoid keyword stuffing
-        5. Keep the same overall structure and length
-        6. Focus on quantifiable achievements where possible
-
-        Return only the improved resume text, no explanations.
-        """
+        # Always use chunked approach for better reliability (Resume Matcher strategy)
+        print(f"    🔄 Using chunked improvement approach for better reliability")
+        return self._improve_resume_chunked(resume_text, job_description, resume_keywords, job_keywords)
 
         try:
             response = self.llm_client.generate(
@@ -2000,7 +2350,62 @@ class SimpleResumeMatcher:
             return improved_resume, new_score
         except Exception as e:
             print(f"❌ Error improving resume: {e}")
-            return resume_text, 0.0
+            # Return original resume and original score instead of 0.0
+            original_score = self.calculate_similarity(resume_keywords, job_keywords)
+            return resume_text, original_score
+
+    def _improve_resume_chunked(self, resume_text: str, job_description: str, resume_keywords: List[str], job_keywords: List[str]) -> Tuple[str, float]:
+        """Improve resume using chunked approach for better reliability"""
+        
+        # Split resume into sections
+        sections = self._split_into_sections(resume_text, "resume")
+        improved_sections = []
+        
+        print(f"    📄 Improving {len(sections)} resume sections...")
+        
+        for i, section in enumerate(sections, 1):
+            if not section.strip():
+                improved_sections.append(section)
+                continue
+                
+            print(f"    🔄 Improving section {i}/{len(sections)}")
+            
+            # Create a focused prompt for this section (Resume Matcher style)
+            section_prompt = f"""
+            Improve this resume section to better match the job requirements:
+
+            Job Keywords: {', '.join(job_keywords[:10])}  # Limit keywords to avoid overwhelming
+
+            Resume Section:
+            {section[:1500]}  # Limit section size for better processing
+
+            Instructions:
+            1. Naturally incorporate relevant job keywords
+            2. Improve alignment with job requirements
+            3. Maintain professional tone
+            4. Keep the same structure and length
+
+            Return only the improved section text.
+            """
+            
+            try:
+                response = self.llm_client.generate(
+                    model=self.model_name, prompt=section_prompt, temperature=0.3, max_tokens=500
+                )
+                improved_section = response["response"].strip()
+                improved_sections.append(improved_section)
+            except Exception as e:
+                print(f"      ⚠️  Section {i} improvement failed: {e}")
+                improved_sections.append(section)  # Keep original if improvement fails
+        
+        # Combine improved sections
+        improved_resume = '\n\n'.join(improved_sections)
+        
+        # Calculate new similarity score
+        new_keywords = self.extract_keywords(improved_resume, "improved resume")
+        new_score = self.calculate_similarity(new_keywords, job_keywords)
+        
+        return improved_resume, new_score
 
     def format_resume_preview(self, structured_data: Dict) -> str:
         """
@@ -2324,8 +2729,13 @@ class SimpleResumeMatcher:
                 f"📂 Using resume keywords from previous analysis ({len(resume_keywords)} keywords)"
             )
         else:
-            resume_keywords = self.extract_keywords(resume_text, "resume")
-            print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+            try:
+                resume_keywords = self.extract_keywords(resume_text, "resume")
+                print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+            except Exception as e:
+                print(f"❌ Critical error: {e}")
+                print("🛑 Cannot continue without resume keywords. Please check your LLM provider connection.")
+                return {"error": "Failed to extract resume keywords", "details": str(e)}
 
         if previous_results and "job_keywords" in previous_results:
             job_keywords = previous_results["job_keywords"]
@@ -2333,8 +2743,13 @@ class SimpleResumeMatcher:
                 f"📂 Using job keywords from previous analysis ({len(job_keywords)} keywords)"
             )
         else:
-            job_keywords = self.extract_keywords(job_description, "job")
-            print(f"✅ Extracted {len(job_keywords)} job keywords")
+            try:
+                job_keywords = self.extract_keywords(job_description, "job")
+                print(f"✅ Extracted {len(job_keywords)} job keywords")
+            except Exception as e:
+                print(f"❌ Critical error: {e}")
+                print("🛑 Cannot continue without job keywords. Please check your LLM provider connection.")
+                return {"error": "Failed to extract job keywords", "details": str(e)}
 
         # Step 5: Calculate initial similarity
         initial_score = self.calculate_similarity(resume_keywords, job_keywords)
@@ -2400,8 +2815,13 @@ class SimpleResumeMatcher:
                 f"📂 Using resume keywords from previous analysis ({len(resume_keywords)} keywords)"
             )
         else:
-            resume_keywords = self.extract_keywords(resume_text, "resume")
-            print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+            try:
+                resume_keywords = self.extract_keywords(resume_text, "resume")
+                print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+            except Exception as e:
+                print(f"❌ Critical error: {e}")
+                print("🛑 Cannot continue without resume keywords. Please check your LLM provider connection.")
+                return {"error": "Failed to extract resume keywords", "details": str(e)}
 
         if previous_results and "job_keywords" in previous_results:
             job_keywords = previous_results["job_keywords"]
@@ -2409,8 +2829,13 @@ class SimpleResumeMatcher:
                 f"📂 Using job keywords from previous analysis ({len(job_keywords)} keywords)"
             )
         else:
-            job_keywords = self.extract_keywords(job_description, "job")
-            print(f"✅ Extracted {len(job_keywords)} job keywords")
+            try:
+                job_keywords = self.extract_keywords(job_description, "job")
+                print(f"✅ Extracted {len(job_keywords)} job keywords")
+            except Exception as e:
+                print(f"❌ Critical error: {e}")
+                print("🛑 Cannot continue without job keywords. Please check your LLM provider connection.")
+                return {"error": "Failed to extract job keywords", "details": str(e)}
 
         improved_resume, scores = (
             self.improvement_advisor.conduct_interactive_improvement(
@@ -2656,14 +3081,36 @@ def main():
     if args.provider in ["openai", "gemini"] and not args.api_key and not os.getenv(f"{args.provider.upper()}_API_KEY"):
         print(f"⚠️  Warning: No API key provided for {args.provider}. Set {args.provider.upper()}_API_KEY environment variable or use --api-key")
 
-    if args.interactive:
-        results = matcher.conduct_interactive_improvement(
-            args.resume_file, args.job_source, previous_results
-        )
-    else:
-        results = matcher.run_analysis(
-            args.resume_file, args.job_source, previous_results
-        )
+    try:
+        if args.interactive:
+            results = matcher.conduct_interactive_improvement(
+                args.resume_file, args.job_source, previous_results
+            )
+        else:
+            results = matcher.run_analysis(
+                args.resume_file, args.job_source, previous_results
+            )
+        
+        # Check if results contain an error
+        if isinstance(results, dict) and "error" in results:
+            print(f"\n❌ ANALYSIS FAILED: {results['error']}")
+            if "details" in results:
+                print(f"Details: {results['details']}")
+            print("\n🔧 Troubleshooting tips:")
+            print("1. Check if your LLM provider (LM Studio) is running")
+            print("2. Verify the model is loaded and accessible")
+            print("3. Try restarting your LLM provider")
+            print("4. Check system resources (RAM, GPU memory)")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"\n❌ UNEXPECTED ERROR: {e}")
+        print("\n🔧 Troubleshooting tips:")
+        print("1. Check if your LLM provider (LM Studio) is running")
+        print("2. Verify the model is loaded and accessible")
+        print("3. Try restarting your LLM provider")
+        print("4. Check system resources (RAM, GPU memory)")
+        sys.exit(1)
 
     # Display results
     print("\n" + "=" * 50)
