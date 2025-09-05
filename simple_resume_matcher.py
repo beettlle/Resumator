@@ -172,14 +172,19 @@ class OllamaProvider(LLMProvider):
         """Get the first available model, or fallback to llama3.1"""
         models = self.get_available_models()
         if models:
-            # Prefer common models
+            # Prefer common models (check both with and without tags)
             preferred_models = ["llama3.1", "gemma2", "mistral", "llama2"]
             for preferred in preferred_models:
+                # Check for exact match first
                 if preferred in models:
                     return preferred
+                # Check for models with tags (e.g., "llama3.1:latest")
+                for model in models:
+                    if model.startswith(preferred + ":"):
+                        return model
             return models[0]
         else:
-            return "llama3.1"
+            return "llama3.1:latest"
     
     def generate(self, prompt: str, **kwargs) -> dict:
         """Generate text using Ollama API"""
@@ -367,7 +372,7 @@ class LMStudioProvider(LLMProvider):
             return models[0]
         else:
             return "local-model"
-
+    
     def get_model_capabilities(self, model_name: str = None) -> dict:
         """Get model capabilities including token limits"""
         if model_name is None:
@@ -1847,9 +1852,14 @@ class SimpleResumeMatcher:
         
         # Create LLM client with provider
         self.llm_client = LLMClient(provider_type, config or {})
+        # Pass None to advisor so it can auto-detect the model
         self.improvement_advisor = ResumeImprovementAdvisor(
-            self.llm_client, self.model_name
+            self.llm_client, None
         )
+        
+        # Update self.model_name to match the advisor's detected model
+        if self.model_name is None:
+            self.model_name = self.improvement_advisor.model_name
 
         # Validate provider connection
         if not self.llm_client.validate_connection(self.model_name):
@@ -1985,7 +1995,7 @@ class SimpleResumeMatcher:
         # Drastically reduce text size to avoid token limits
         max_chars = 800  # Much smaller to stay well under token limits
         short_text = text[:max_chars] + "..." if len(text) > max_chars else text
-        
+
         prompt = f"""
         Extract keywords from this {context}:
         {short_text}
@@ -2230,7 +2240,53 @@ class SimpleResumeMatcher:
                 else:
                     print(f"      ❌ All retries failed for {self.model_name}")
         
-        # If all retries fail, fall back to basic keyword extraction
+        # If primary model fails, try Mistral as fallback
+        print(f"      🔄 Trying Mistral as fallback...")
+        try:
+            start_time = time.time()
+            response = self.llm_client.generate(
+                model="mistralai/mistral-small-3.2", prompt=prompt, temperature=0.1, max_tokens=200
+            )
+            elapsed_time = time.time() - start_time
+            
+            keywords = [kw.strip() for kw in response["response"].split(",")]
+            result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]
+            
+            if result:
+                print(f"      ✅ Mistral fallback succeeded in {elapsed_time:.1f}s")
+                return result
+            else:
+                print(f"      ⚠️  Mistral returned empty keywords after {elapsed_time:.1f}s")
+                
+        except Exception as e:
+            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+            error_msg = str(e)
+            print(f"      ❌ Mistral fallback failed after {elapsed_time:.1f}s: {error_msg}")
+        
+        # If Mistral fails, try Gemma as tertiary fallback
+        print(f"      🔄 Trying Gemma as tertiary fallback...")
+        try:
+            start_time = time.time()
+            response = self.llm_client.generate(
+                model="google/gemma-3-27b", prompt=prompt, temperature=0.1, max_tokens=200
+            )
+            elapsed_time = time.time() - start_time
+            
+            keywords = [kw.strip() for kw in response["response"].split(",")]
+            result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]
+            
+            if result:
+                print(f"      ✅ Gemma fallback succeeded in {elapsed_time:.1f}s")
+                return result
+            else:
+                print(f"      ⚠️  Gemma returned empty keywords after {elapsed_time:.1f}s")
+                
+        except Exception as e:
+            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+            error_msg = str(e)
+            print(f"      ❌ Gemma fallback failed after {elapsed_time:.1f}s: {error_msg}")
+        
+        # If all LLM attempts fail, fall back to basic keyword extraction
         print(f"      🔧 Falling back to basic keyword extraction...")
         return self._extract_basic_keywords(chunk, context)
 
@@ -2379,32 +2435,32 @@ class SimpleResumeMatcher:
             Resume Section:
             {section[:1500]}  # Limit section size for better processing
 
-            Instructions:
+        Instructions:
             1. Naturally incorporate relevant job keywords
             2. Improve alignment with job requirements
             3. Maintain professional tone
             4. Keep the same structure and length
 
             Return only the improved section text.
-            """
-            
-            try:
-                response = self.llm_client.generate(
-                    model=self.model_name, prompt=section_prompt, temperature=0.3, max_tokens=500
-                )
-                improved_section = response["response"].strip()
-                improved_sections.append(improved_section)
-            except Exception as e:
-                print(f"      ⚠️  Section {i} improvement failed: {e}")
-                improved_sections.append(section)  # Keep original if improvement fails
-        
+        """
+
+        try:
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=section_prompt, temperature=0.3, max_tokens=500
+            )
+            improved_section = response["response"].strip()
+            improved_sections.append(improved_section)
+        except Exception as e:
+            print(f"      ⚠️  Section {i} improvement failed: {e}")
+            improved_sections.append(section)  # Keep original if improvement fails
+
         # Combine improved sections
         improved_resume = '\n\n'.join(improved_sections)
-        
+
         # Calculate new similarity score
         new_keywords = self.extract_keywords(improved_resume, "improved resume")
         new_score = self.calculate_similarity(new_keywords, job_keywords)
-        
+
         return improved_resume, new_score
 
     def format_resume_preview(self, structured_data: Dict) -> str:

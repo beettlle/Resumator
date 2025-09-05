@@ -95,3 +95,7 @@ next-env.d.ts
 
 # Devcontainer data
 .devcontainer/ollama-data/
+
+# Resume files
+*.pdf
+*.json
