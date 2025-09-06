@@ -778,10 +778,16 @@ class ResumeImprovementAdvisor:
         print(f"🤖 Generating personalized questions for Round {round_num}...")
 
         # Prepare context for LLM
+        self_description_context = ""
+        if previous_responses.get("self_description"):
+            self_description_context = f"""
+        Candidate's self-description: {previous_responses['self_description'][:300]}...
+        """
+        
         context = f"""
         Round {round_num} of resume improvement. Previous responses from user:
         {self._format_previous_responses(previous_responses)}
-        
+        {self_description_context}
         Current gap analysis:
         - Missing keywords: {gap_analysis.get('missing_keywords', [])}
         - Skill gaps: {gap_analysis.get('skill_gaps', [])}
@@ -1459,8 +1465,9 @@ CERTIFICATIONS
         print("🔄 Integrating your responses into resume improvements...")
 
         # Check if we need chunk processing based on estimated tokens
+        self_description = user_responses.get("self_description", "")
         total_content_length = (
-            len(job_description) + len(resume_text) + len(str(user_responses))
+            len(job_description) + len(resume_text) + len(str(user_responses)) + len(self_description)
         )
 
         # Estimate tokens (roughly 4 characters per token)
@@ -1493,6 +1500,15 @@ CERTIFICATIONS
             processed_resume = self.process_resume_chunks(resume_text)
             processed_responses = self.process_user_responses_chunks(user_responses)
 
+        # Include self-description context in the prompt
+        self_description_context = ""
+        if self_description:
+            self_description_context = f"""
+        
+        Candidate's Self-Description:
+        {self_description}
+        """
+        
         prompt = f"""
         You are an expert resume writer. Integrate the user's responses into their resume to improve it for the target job.
         
@@ -1503,7 +1519,7 @@ CERTIFICATIONS
         
         Current Resume:
         {processed_resume}
-        
+        {self_description_context}
         User Responses:
         {processed_responses}
         
@@ -1516,6 +1532,7 @@ CERTIFICATIONS
         6. Keep the same overall structure but enhance content
         7. Focus on achievements and results, not just responsibilities
         8. Use action verbs and industry-specific terminology
+        9. Consider the candidate's self-description when integrating responses
         
         Return only the improved resume text, no explanations.
         """
@@ -1557,6 +1574,35 @@ CERTIFICATIONS
                 print(f"❌ Fallback model also failed: {fallback_error}")
                 return resume_text
 
+    def collect_candidate_self_description(self, job_description: str) -> str:
+        """Collect candidate's self-description as the first step"""
+        
+        print("\n" + "=" * 60)
+        print("🎯 INTERACTIVE RESUME IMPROVEMENT SESSION")
+        print("=" * 60)
+        
+        print("\n👋 Welcome! Before we start improving your resume, I'd like to learn more about you.")
+        print("This will help me ask better, more targeted questions throughout our session.")
+        
+        print(f"\n📋 Job Context:")
+        print(f"   {job_description[:200]}{'...' if len(job_description) > 200 else ''}")
+        
+        print(f"\n💭 Please tell me about yourself in relation to this role:")
+        print("   • What relevant experience, skills, or achievements do you have?")
+        print("   • What projects or accomplishments are you most proud of?")
+        print("   • What unique value would you bring to this position?")
+        print("   • Any additional context about your background or career journey?")
+        print("\n   (Feel free to include things that might not be on your current resume)")
+        
+        self_description = input(f"\n   Your response: ").strip()
+        
+        if not self_description or self_description.lower() in ["skip", "none", "no", "n/a"]:
+            print("   ⏭️  No self-description provided, proceeding with resume analysis only")
+            return ""
+        
+        print("   ✅ Thank you! This information will help me ask better questions.")
+        return self_description
+
     def conduct_interactive_improvement(
         self,
         resume_text: str,
@@ -1567,21 +1613,31 @@ CERTIFICATIONS
     ) -> Tuple[str, List[float]]:
         """Conduct interactive improvement sessions with the user"""
 
-        print("\n" + "=" * 60)
-        print("🎯 INTERACTIVE RESUME IMPROVEMENT SESSION")
-        print("=" * 60)
+        # Step 1: Collect candidate self-description
+        self_description = self.collect_candidate_self_description(job_description)
+        
+        # Extract keywords from self-description if provided
+        self_description_keywords = []
+        if self_description:
+            self_description_keywords = self.extract_keywords(self_description, "candidate self-description")
+            print(f"✅ Extracted {len(self_description_keywords)} keywords from your self-description")
 
         current_resume = resume_text
         scores = []
         user_responses = {}
+        
+        # Store self-description in user_responses for later use
+        if self_description:
+            user_responses["self_description"] = self_description
 
         for round_num in range(1, max_rounds + 1):
             print(f"\n📋 ROUND {round_num} OF {max_rounds}")
             print("-" * 40)
 
-            # Analyze current gaps
+            # Analyze current gaps (considering both resume and self-description)
+            combined_keywords = resume_keywords + self_description_keywords
             gap_analysis = self.analyze_resume_gaps(
-                current_resume, job_description, resume_keywords, job_keywords
+                current_resume, job_description, combined_keywords, job_keywords
             )
 
             # Generate questions based on round number and previous responses
