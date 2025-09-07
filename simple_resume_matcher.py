@@ -1655,31 +1655,7 @@ CERTIFICATIONS
         logger.always("• Any additional context about your background or career journey?")
         logger.always("\n(Feel free to include things that might not be on your current resume)")
         
-        print(f"\nYour response (press Enter twice when finished, or type 'file:' followed by filename):")
-        first_line = input().strip()
-        
-        if first_line.startswith("file:"):
-            # Read from file
-            filename = first_line[5:].strip()
-            try:
-                with open(filename, 'r', encoding='utf-8') as f:
-                    self_description = f.read().strip()
-                logger.success(f"Read response from file: {filename}")
-            except FileNotFoundError:
-                logger.error(f"File not found: {filename}")
-                self_description = ""
-        else:
-            # Multi-line input
-            lines = [first_line] if first_line else []
-            while True:
-                try:
-                    line = input()
-                    if line == "" and lines:  # Empty line after content means done
-                        break
-                    lines.append(line)
-                except EOFError:
-                    break
-            self_description = "\n".join(lines).strip()
+        self_description = self.get_multiline_input("\nYour response")
         
         if not self_description or self_description.lower() in ["skip", "none", "no", "n/a"]:
             logger.info("No self-description provided, proceeding with resume analysis only")
@@ -1754,7 +1730,7 @@ CERTIFICATIONS
             # Ask if user wants to continue
             if round_num < max_rounds:
                 continue_choice = (
-                    input(f"\nContinue to round {round_num + 1}? (y/n): ")
+                    self.get_multiline_input(f"\nContinue to round {round_num + 1}? (y/n)", allow_file_input=False)
                     .lower()
                     .strip()
                 )
@@ -1777,7 +1753,7 @@ CERTIFICATIONS
             print(f"\n{i}. {q['context']}")
             print(f"   {q['question']}")
 
-            response = input(f"\n   Your response: ").strip()
+            response = self.get_multiline_input(f"\n   Your response").strip()
 
             if response.lower() in ["skip", "none", "no", "n/a"]:
                 print("   [INFO] Skipped")
@@ -1789,6 +1765,48 @@ CERTIFICATIONS
                 print("   [INFO] No response provided")
 
         return responses
+
+    def get_multiline_input(self, prompt: str, allow_file_input: bool = True) -> str:
+        """
+        Get multi-line input from user, handling long text and file input.
+        
+        Args:
+            prompt: The prompt to display to the user
+            allow_file_input: Whether to allow file input option
+            
+        Returns:
+            The user's input as a string
+        """
+        if allow_file_input:
+            print(f"{prompt} (press Enter twice when finished, or type 'file:' followed by filename):")
+        else:
+            print(f"{prompt} (press Enter twice when finished):")
+        
+        first_line = input().strip()
+        
+        if allow_file_input and first_line.startswith("file:"):
+            # Read from file
+            filename = first_line[5:].strip()
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                logger.success(f"Read input from file: {filename}")
+                return content
+            except FileNotFoundError:
+                logger.error(f"File not found: {filename}")
+                return ""
+        else:
+            # Multi-line input
+            lines = [first_line] if first_line else []
+            while True:
+                try:
+                    line = input()
+                    if line == "" and lines:  # Empty line after content means done
+                        break
+                    lines.append(line)
+                except EOFError:
+                    break
+            return "\n".join(lines).strip()
 
     def extract_keywords(self, text: str, context: str = "resume") -> List[str]:
         """Extract keywords from text using LLM"""
