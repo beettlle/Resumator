@@ -22,12 +22,65 @@ from itertools import cycle
 from typing import Dict, List, Tuple, Optional
 from urllib.parse import urlparse
 import requests
+from enum import Enum
+
+class LogLevel(Enum):
+    QUIET = 0      # Only show errors and critical messages
+    NORMAL = 1     # Show errors, info, and success messages (default)
+    VERBOSE = 2    # Show all messages including warnings and detailed progress
+    DEBUG = 3      # Show everything including debug information
+
+class Logger:
+    """Simple logging system for controlling output verbosity"""
+    
+    def __init__(self, level: LogLevel = LogLevel.NORMAL):
+        self.level = level
+    
+    def set_level(self, level: LogLevel):
+        """Set the logging level"""
+        self.level = level
+    
+    def error(self, message: str):
+        """Log error messages (always shown)"""
+        print(f"[ERROR] {message}")
+    
+    def warning(self, message: str):
+        """Log warning messages (shown in VERBOSE and above)"""
+        if self.level.value >= LogLevel.VERBOSE.value:
+            print(f"[WARNING] {message}")
+    
+    def info(self, message: str):
+        """Log info messages (shown in NORMAL and above)"""
+        if self.level.value >= LogLevel.NORMAL.value:
+            print(f"[INFO] {message}")
+    
+    def success(self, message: str):
+        """Log success messages (shown in NORMAL and above)"""
+        if self.level.value >= LogLevel.NORMAL.value:
+            print(f"[SUCCESS] {message}")
+    
+    def verbose(self, message: str):
+        """Log verbose messages (shown in VERBOSE and above)"""
+        if self.level.value >= LogLevel.VERBOSE.value:
+            print(f"[INFO] {message}")
+    
+    def debug(self, message: str):
+        """Log debug messages (shown in DEBUG only)"""
+        if self.level.value >= LogLevel.DEBUG.value:
+            print(f"[DEBUG] {message}")
+    
+    def always(self, message: str):
+        """Log messages that should always be shown (no prefix)"""
+        print(message)
+
+# Global logger instance
+logger = Logger()
 
 try:
     from markitdown import MarkItDown
 except ImportError:
     print(
-        "❌ Error: markitdown not installed. "
+        "[ERROR] markitdown not installed. "
         "Install with: pip install markitdown[all]"
     )
     sys.exit(1)
@@ -36,17 +89,17 @@ try:
     from bs4 import BeautifulSoup
 except ImportError:
     print(
-        "❌ Error: beautifulsoup4 not installed. Install with: pip install beautifulsoup4"
+        "[ERROR] beautifulsoup4 not installed. Install with: pip install beautifulsoup4"
     )
     sys.exit(1)
 
 
-class ProgressSpinner:
-    """Animated spinner for showing progress during long operations"""
+class ProfessionalSpinner:
+    """Professional spinner for showing progress during long operations"""
 
     def __init__(self, message="Processing..."):
         self.message = message
-        self.spinner = cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        self.frames = ['|', '/', '-', '\\']
         self.running = False
         self.thread = None
 
@@ -57,18 +110,24 @@ class ProgressSpinner:
         self.thread.daemon = True  # Allow main thread to exit
         self.thread.start()
 
-    def stop(self):
-        """Stop the spinner and clear the line"""
+    def stop(self, success_message=None):
+        """Stop the spinner and show completion message"""
         self.running = False
         if self.thread:
             self.thread.join(timeout=0.1)  # Wait briefly for thread to finish
-        print(f"\r{' ' * 60}\r", end="", flush=True)  # Clear line
+        if success_message:
+            logger.success(success_message)
+        else:
+            logger.info(f"{self.message} ✓")
 
     def _spin(self):
         """Internal method to run the spinner animation"""
+        i = 0
         while self.running:
-            print(f"\r{next(self.spinner)} {self.message}", end="", flush=True)
-            time.sleep(0.1)
+            frame = self.frames[i % len(self.frames)]
+            print(f"\r[INFO] {self.message} {frame}", end='', flush=True)
+            time.sleep(0.25)
+            i += 1
 
 
 class ProgressTracker:
@@ -86,9 +145,9 @@ class ProgressTracker:
         elapsed = time.time() - self.start_time
 
         if step_name:
-            print(f"✅ Step {self.current_step}/{self.total_steps}: {step_name}")
+            print(f"[SUCCESS] Step {self.current_step}/{self.total_steps}: {step_name}")
         else:
-            print(f"✅ Step {self.current_step}/{self.total_steps} complete")
+            print(f"[SUCCESS] Step {self.current_step}/{self.total_steps} complete")
 
         if self.current_step == self.total_steps:
             total_time = time.time() - self.start_time
@@ -165,7 +224,7 @@ class OllamaProvider(LLMProvider):
             models = [model["name"] for model in models_data.get("models", [])]
             return models
         except Exception as e:
-            print(f"❌ Error getting available models from Ollama: {e}")
+            print(f"[ERROR] Error getting available models from Ollama: {e}")
             return []
     
     def get_default_model(self) -> str:
@@ -207,7 +266,7 @@ class OllamaProvider(LLMProvider):
             result = response.json()
             return {"response": result.get("response", "")}
         except Exception as e:
-            print(f"❌ Error calling Ollama: {e}")
+            print(f"[ERROR] Error calling Ollama: {e}")
             raise
 
 
@@ -243,7 +302,7 @@ class OpenAIProvider(LLMProvider):
             ]
             return chat_models
         except Exception as e:
-            print(f"❌ Error getting available models from OpenAI: {e}")
+            print(f"[ERROR] Error getting available models from OpenAI: {e}")
             return []
     
     def get_default_model(self) -> str:
@@ -268,7 +327,7 @@ class OpenAIProvider(LLMProvider):
             result = response.json()
             return {"response": result["choices"][0]["message"]["content"]}
         except Exception as e:
-            print(f"❌ Error calling OpenAI: {e}")
+            print(f"[ERROR] Error calling OpenAI: {e}")
             raise
 
 
@@ -324,7 +383,7 @@ class GeminiProvider(LLMProvider):
             
             return {"response": ""}
         except Exception as e:
-            print(f"❌ Error calling Gemini: {e}")
+            print(f"[ERROR] Error calling Gemini: {e}")
             raise
 
 
@@ -350,7 +409,7 @@ class LMStudioProvider(LLMProvider):
             chat_models = [model for model in models if "embed" not in model.lower()]
             return chat_models
         except Exception as e:
-            print(f"❌ Error getting available models from LM Studio: {e}")
+            print(f"[ERROR] Error getting available models from LM Studio: {e}")
             return []
     
     def get_default_model(self) -> str:
@@ -396,7 +455,7 @@ class LMStudioProvider(LLMProvider):
                     # Use more conservative limits to avoid overwhelming the model
                     return default_limits.get(model_name, {"max_input_tokens": 4000, "max_total_tokens": 4096})
         except Exception as e:
-            print(f"⚠️  Could not get model capabilities: {e}")
+            print(f"[WARNING]  Could not get model capabilities: {e}")
         
         # Fallback to default limits
         return default_limits.get(model_name, {"max_input_tokens": 4000, "max_total_tokens": 4096})
@@ -425,7 +484,7 @@ class LMStudioProvider(LLMProvider):
             result = response.json()
             return {"response": result["choices"][0]["message"]["content"]}
         except Exception as e:
-            print(f"❌ Error calling LM Studio: {e}")
+            print(f"[ERROR] Error calling LM Studio: {e}")
             raise
 
 
@@ -483,28 +542,28 @@ class LLMClient:
         try:
             models = self.get_available_models()
             default_model = self.get_default_model()
-            print(f"✅ {self.provider_type} connected, {len(models)} models available")
+            logger.success(f"{self.provider_type} connected, {len(models)} models available")
             
             # Show the model that will actually be used
             if specified_model:
-                print(f"🤖 Using specified model: {specified_model}")
+                logger.info(f"Using specified model: {specified_model}")
             else:
-                print(f"🤖 Default model: {default_model}")
+                logger.info(f"Default model: {default_model}")
             
             # Test a simple generation to ensure the model is actually working
             if self.provider_type == "lmstudio":
                 print("🧪 Testing model generation capability...")
                 test_response = self.generate("Say 'Hello, world!'", max_tokens=10)
                 if test_response and "response" in test_response:
-                    print("✅ Model generation test successful")
+                    print("[SUCCESS] Model generation test successful")
                     return True
                 else:
-                    print("❌ Model generation test failed")
+                    print("[ERROR] Model generation test failed")
                     return False
             
             return True
         except Exception as e:
-            print(f"❌ {self.provider_type} connection failed: {e}")
+            print(f"[ERROR] {self.provider_type} connection failed: {e}")
             return False
 
 
@@ -522,7 +581,7 @@ class ResumeImprovementAdvisor:
         # Auto-detect model if none specified
         if model_name is None:
             self.model_name = llm_client.get_default_model()
-            print(f"🤖 Using auto-detected model: {self.model_name}")
+            logger.info(f"Using auto-detected model: {self.model_name}")
         else:
             self.model_name = model_name
 
@@ -607,7 +666,7 @@ class ResumeImprovementAdvisor:
         # Estimate processing time
         total_content = len(resume_text) + len(job_description)
         estimated_time = estimate_processing_time(total_content)
-        print(f"⏱️  Estimated processing time: {estimated_time}")
+        print(f"[INFO]  Estimated processing time: {estimated_time}")
 
         prompt = f"""
         Analyze this resume against the job description and identify specific improvement opportunities.
@@ -640,7 +699,7 @@ class ResumeImprovementAdvisor:
         """
 
         # Show spinner during LLM call
-        spinner = ProgressSpinner("🤖 AI is analyzing your resume...")
+        spinner = ProfessionalSpinner("AI is analyzing your resume")
         spinner.start()
 
         try:
@@ -648,7 +707,7 @@ class ResumeImprovementAdvisor:
                 model=self.model_name, prompt=prompt, temperature=0.2
             )
             spinner.stop()
-            print("✅ Gap analysis complete!")
+            print("[SUCCESS] Gap analysis complete!")
 
             # Extract JSON from response
             json_start = response["response"].find("{")
@@ -658,21 +717,21 @@ class ResumeImprovementAdvisor:
             return json.loads(json_str)
         except Exception as e:
             spinner.stop()
-            print(f"❌ Error analyzing gaps: {e}")
-            print("🔄 Trying fallback to smaller model...")
+            print(f"[ERROR] Error analyzing gaps: {e}")
+            print("[INFO] Trying fallback to smaller model...")
 
             # Try with a smaller model as fallback
             try:
                 fallback_model = "mistralai/mistral-small-3.2"
                 if fallback_model != self.model_name:
-                    spinner = ProgressSpinner("🤖 Retrying with fallback model...")
+                    spinner = ProfessionalSpinner("Retrying with fallback model")
                     spinner.start()
 
                     response = self.llm_client.generate(
                         model=fallback_model, prompt=prompt, temperature=0.2
                     )
                     spinner.stop()
-                    print(f"✅ Successfully used fallback model: {fallback_model}")
+                    print(f"[SUCCESS] Successfully used fallback model: {fallback_model}")
 
                     # Extract JSON from response
                     json_start = response["response"].find("{")
@@ -681,11 +740,11 @@ class ResumeImprovementAdvisor:
 
                     return json.loads(json_str)
                 else:
-                    print("❌ Fallback model is same as current model")
+                    print("[ERROR] Fallback model is same as current model")
                     return {"improvement_areas": [], "questions_needed": []}
             except Exception as fallback_error:
                 spinner.stop()
-                print(f"❌ Fallback model also failed: {fallback_error}")
+                print(f"[ERROR] Fallback model also failed: {fallback_error}")
                 return {"improvement_areas": [], "questions_needed": []}
 
     def generate_targeted_questions(
@@ -775,7 +834,7 @@ class ResumeImprovementAdvisor:
     ) -> List[Dict]:
         """Generate dynamic questions using LLM based on previous responses"""
 
-        print(f"🤖 Generating personalized questions for Round {round_num}...")
+        print(f"[INFO] Generating personalized questions for Round {round_num}...")
 
         # Prepare context for LLM
         self_description_context = ""
@@ -830,13 +889,13 @@ class ResumeImprovementAdvisor:
             """
 
         # Show spinner during LLM call
-        spinner = ProgressSpinner("🤖 AI is generating personalized questions...")
+        spinner = ProfessionalSpinner("AI is generating personalized questions")
         spinner.start()
 
         try:
             response = self.llm_client.generate(prompt, model=self.model_name)
             spinner.stop()
-            print("✅ Dynamic questions generated!")
+            print("[SUCCESS] Dynamic questions generated!")
             questions_text = response.get("response", "").strip()
 
             # Parse questions from response
@@ -864,7 +923,7 @@ class ResumeImprovementAdvisor:
             return questions[:5]  # Ensure max 5 questions
 
         except Exception as e:
-            print(f"❌ Error generating dynamic questions: {e}")
+            print(f"[ERROR] Error generating dynamic questions: {e}")
             return self._generate_fallback_questions(round_num, gap_analysis)
 
     def _format_previous_responses(self, previous_responses: Dict) -> str:
@@ -949,12 +1008,12 @@ class ResumeImprovementAdvisor:
         """Generate a formatted resume using the specified template"""
 
         if template_type not in self.resume_templates:
-            print(f"❌ Unknown template type: {template_type}")
+            print(f"[ERROR] Unknown template type: {template_type}")
             print(f"Available templates: {', '.join(self.resume_templates.keys())}")
             template_type = "classic_ats"  # Default fallback
 
         template_info = self.resume_templates[template_type]
-        print(f"📄 Generating {template_info['name']} template...")
+        print(f"[INFO] Generating {template_info['name']} template...")
 
         # Extract basic information from resume data
         improved_resume = resume_data.get("improved_resume", "")
@@ -1443,15 +1502,15 @@ CERTIFICATIONS
 
     def list_available_templates(self) -> None:
         """Display available resume templates"""
-        print("\n📋 AVAILABLE RESUME TEMPLATES")
-        print("=" * 50)
+        logger.always("\nAVAILABLE RESUME TEMPLATES")
+        logger.always("=" * 50)
 
         for key, template in self.resume_templates.items():
-            print(f"\n🎯 {template['name']}")
-            print(f"   Description: {template['description']}")
-            print(f"   Best For: {template['best_for']}")
-            print(f"   Key Features: {', '.join(template['features'])}")
-            print(f"   Template ID: {key}")
+            logger.always(f"\n{template['name']}")
+            logger.always(f"   Description: {template['description']}")
+            logger.always(f"   Best For: {template['best_for']}")
+            logger.always(f"   Key Features: {', '.join(template['features'])}")
+            logger.always(f"   Template ID: {key}")
 
     def integrate_user_responses(
         self,
@@ -1462,7 +1521,7 @@ CERTIFICATIONS
     ) -> str:
         """Intelligently integrate user responses into the resume"""
 
-        print("🔄 Integrating your responses into resume improvements...")
+        print("[INFO] Integrating your responses into resume improvements...")
 
         # Check if we need chunk processing based on estimated tokens
         self_description = user_responses.get("self_description", "")
@@ -1473,8 +1532,8 @@ CERTIFICATIONS
         # Estimate tokens (roughly 4 characters per token)
         estimated_tokens = total_content_length // 4
 
-        print(f"📊 Content length analysis: {total_content_length} characters")
-        print(f"📊 Estimated tokens: {estimated_tokens}")
+        print(f"[INFO] Content length analysis: {total_content_length} characters")
+        print(f"[INFO] Estimated tokens: {estimated_tokens}")
 
         # Use configured token limit
         token_limit = self.max_tokens
@@ -1482,7 +1541,7 @@ CERTIFICATIONS
         # If content fits within token limit, use full content
         if estimated_tokens < token_limit:
             print(
-                f"✅ Content fits within token limit ({estimated_tokens} < {token_limit}), using full content"
+                f"[SUCCESS] Content fits within token limit ({estimated_tokens} < {token_limit}), using full content"
             )
             processed_job_desc = job_description
             processed_resume = resume_text
@@ -1491,7 +1550,7 @@ CERTIFICATIONS
             )
         else:
             print(
-                f"⚠️ Content exceeds token limit ({estimated_tokens} > {token_limit}), using chunk processing..."
+                f"[WARNING] Content exceeds token limit ({estimated_tokens} > {token_limit}), using chunk processing..."
             )
             # Use chunk processing to preserve all information
             processed_job_desc = self.process_job_description_chunks(
@@ -1538,7 +1597,7 @@ CERTIFICATIONS
         """
 
         # Show spinner during LLM call
-        spinner = ProgressSpinner("🤖 AI is integrating your responses...")
+        spinner = ProfessionalSpinner("AI is integrating your responses")
         spinner.start()
 
         try:
@@ -1546,61 +1605,63 @@ CERTIFICATIONS
                 model=self.model_name, prompt=prompt, temperature=0.3
             )
             spinner.stop()
-            print("✅ Resume integration complete!")
+            print("[SUCCESS] Resume integration complete!")
             return response["response"].strip()
         except Exception as e:
             spinner.stop()
-            print(f"❌ Error integrating responses: {e}")
-            print("🔄 Trying fallback to smaller model...")
+            print(f"[ERROR] Error integrating responses: {e}")
+            print("[INFO] Trying fallback to smaller model...")
 
             # Try with a smaller model as fallback
             try:
                 fallback_model = "mistralai/mistral-small-3.2"
                 if fallback_model != self.model_name:
-                    spinner = ProgressSpinner("🤖 Retrying with fallback model...")
+                    spinner = ProfessionalSpinner("Retrying with fallback model")
                     spinner.start()
 
                     response = self.llm_client.generate(
                         model=fallback_model, prompt=prompt, temperature=0.3
                     )
                     spinner.stop()
-                    print(f"✅ Successfully used fallback model: {fallback_model}")
+                    print(f"[SUCCESS] Successfully used fallback model: {fallback_model}")
                     return response["response"].strip()
                 else:
-                    print("❌ Fallback model is same as current model")
+                    print("[ERROR] Fallback model is same as current model")
                     return resume_text
             except Exception as fallback_error:
                 spinner.stop()
-                print(f"❌ Fallback model also failed: {fallback_error}")
+                print(f"[ERROR] Fallback model also failed: {fallback_error}")
                 return resume_text
 
     def collect_candidate_self_description(self, job_description: str) -> str:
         """Collect candidate's self-description as the first step"""
         
-        print("\n" + "=" * 60)
-        print("🎯 INTERACTIVE RESUME IMPROVEMENT SESSION")
-        print("=" * 60)
+        logger.always("\n" + "=" * 60)
+        logger.always("INTERACTIVE RESUME IMPROVEMENT SESSION")
+        logger.always("=" * 60)
         
-        print("\n👋 Welcome! Before we start improving your resume, I'd like to learn more about you.")
-        print("This will help me ask better, more targeted questions throughout our session.")
+        logger.info("Welcome! Before we start improving your resume, I'd like to learn more about you.")
+        logger.info("This will help me ask better, more targeted questions throughout our session.")
         
-        print(f"\n📋 Job Context:")
-        print(f"   {job_description[:200]}{'...' if len(job_description) > 200 else ''}")
+        logger.always(f"\nJob Context:")
+        logger.always(f"   {job_description[:200]}{'...' if len(job_description) > 200 else ''}")
         
-        print(f"\n💭 Please tell me about yourself in relation to this role:")
-        print("   • What relevant experience, skills, or achievements do you have?")
-        print("   • What projects or accomplishments are you most proud of?")
-        print("   • What unique value would you bring to this position?")
-        print("   • Any additional context about your background or career journey?")
-        print("\n   (Feel free to include things that might not be on your current resume)")
+        logger.always(f"\nCANDIDATE SELF-DESCRIPTION")
+        logger.always("=" * 30)
+        logger.always("Please tell me about yourself in relation to this role:")
+        logger.always("• What relevant experience, skills, or achievements do you have?")
+        logger.always("• What projects or accomplishments are you most proud of?")
+        logger.always("• What unique value would you bring to this position?")
+        logger.always("• Any additional context about your background or career journey?")
+        logger.always("\n(Feel free to include things that might not be on your current resume)")
         
-        self_description = input(f"\n   Your response: ").strip()
+        self_description = input(f"\nYour response: ").strip()
         
         if not self_description or self_description.lower() in ["skip", "none", "no", "n/a"]:
-            print("   ⏭️  No self-description provided, proceeding with resume analysis only")
+            logger.info("No self-description provided, proceeding with resume analysis only")
             return ""
         
-        print("   ✅ Thank you! This information will help me ask better questions.")
+        logger.success("Thank you! This information will help me ask better questions.")
         return self_description
 
     def conduct_interactive_improvement(
@@ -1620,7 +1681,7 @@ CERTIFICATIONS
         self_description_keywords = []
         if self_description:
             self_description_keywords = self.extract_keywords(self_description, "candidate self-description")
-            print(f"✅ Extracted {len(self_description_keywords)} keywords from your self-description")
+            logger.success(f"Extracted {len(self_description_keywords)} keywords from your self-description")
 
         current_resume = resume_text
         scores = []
@@ -1631,7 +1692,7 @@ CERTIFICATIONS
             user_responses["self_description"] = self_description
 
         for round_num in range(1, max_rounds + 1):
-            print(f"\n📋 ROUND {round_num} OF {max_rounds}")
+            print(f"\nROUND {round_num} OF {max_rounds}")
             print("-" * 40)
 
             # Analyze current gaps (considering both resume and self-description)
@@ -1646,7 +1707,7 @@ CERTIFICATIONS
             )
 
             if not questions:
-                print("✅ No more improvement opportunities identified!")
+                print("[SUCCESS] No more improvement opportunities identified!")
                 break
 
             # Ask questions and collect responses
@@ -1654,7 +1715,7 @@ CERTIFICATIONS
             user_responses.update(round_responses)
 
             # Integrate responses
-            print("\n🔄 Integrating your responses...")
+            print("\n[INFO] Integrating your responses...")
             improved_resume = self.integrate_user_responses(
                 current_resume, user_responses, job_description, job_keywords
             )
@@ -1664,17 +1725,17 @@ CERTIFICATIONS
             new_score = self.calculate_similarity(new_keywords, job_keywords)
             scores.append(new_score)
 
-            print(f"📊 Round {round_num} Score: {new_score:.2%}")
+            print(f"[INFO] Round {round_num} Score: {new_score:.2%}")
 
             # Ask if user wants to continue
             if round_num < max_rounds:
                 continue_choice = (
-                    input(f"\n🤔 Continue to round {round_num + 1}? (y/n): ")
+                    input(f"\nContinue to round {round_num + 1}? (y/n): ")
                     .lower()
                     .strip()
                 )
                 if continue_choice not in ["y", "yes"]:
-                    print("✅ Stopping improvement process.")
+                    print("[SUCCESS] Stopping improvement process.")
                     break
 
             current_resume = improved_resume
@@ -1686,7 +1747,7 @@ CERTIFICATIONS
 
         responses = {}
 
-        print(f"\n❓ I have {len(questions)} questions to help improve your resume:")
+        print(f"\nI have {len(questions)} questions to help improve your resume:")
 
         for i, q in enumerate(questions, 1):
             print(f"\n{i}. {q['context']}")
@@ -1695,13 +1756,13 @@ CERTIFICATIONS
             response = input(f"\n   Your response: ").strip()
 
             if response.lower() in ["skip", "none", "no", "n/a"]:
-                print("   ⏭️  Skipped")
+                print("   [INFO] Skipped")
                 continue
             elif response:
                 responses[q["type"]] = response
-                print("   ✅ Recorded")
+                print("   [SUCCESS] Recorded")
             else:
-                print("   ⏭️  No response provided")
+                print("   [INFO] No response provided")
 
         return responses
 
@@ -1725,7 +1786,7 @@ CERTIFICATIONS
             keywords = [kw.strip() for kw in response["response"].split(",")]
             return [kw for kw in keywords if kw and len(kw) > 2]
         except Exception as e:
-            print(f"❌ Error extracting keywords: {e}")
+            print(f"[ERROR] Error extracting keywords: {e}")
             return []
 
     def calculate_similarity(
@@ -1772,7 +1833,7 @@ class JobDescriptionExtractor:
 
     def extract_from_url(self, url: str) -> str:
         """Extract job description from a web page"""
-        print(f"🌐 Extracting job description from URL: {url}")
+        logger.info(f"Extracting job description from URL: {url}")
 
         try:
             response = self.session.get(url, timeout=30)
@@ -1823,16 +1884,16 @@ class JobDescriptionExtractor:
                     "Could not extract meaningful content from the webpage"
                 )
 
-            print(f"✅ Extracted {len(text)} characters from webpage")
+            logger.success(f"Extracted {len(text)} characters from webpage")
             return text
 
         except Exception as e:
-            print(f"❌ Error extracting from URL: {e}")
+            print(f"[ERROR] Error extracting from URL: {e}")
             raise
 
     def extract_from_pdf(self, pdf_path: str) -> str:
         """Extract job description from a PDF file"""
-        print(f"📄 Extracting job description from PDF: {pdf_path}")
+        logger.info(f"Extracting job description from PDF: {pdf_path}")
 
         try:
             result = self.md.convert(pdf_path)
@@ -1842,11 +1903,11 @@ class JobDescriptionExtractor:
             if len(text.strip()) < 50:
                 raise ValueError("Could not extract meaningful content from the PDF")
 
-            print(f"✅ Extracted {len(text)} characters from PDF")
+            logger.success(f"Extracted {len(text)} characters from PDF")
             return text
 
         except Exception as e:
-            print(f"❌ Error extracting from PDF: {e}")
+            print(f"[ERROR] Error extracting from PDF: {e}")
             raise
 
     def clean_text(self, text: str) -> str:
@@ -1924,7 +1985,7 @@ class SimpleResumeMatcher:
     
     def _show_provider_setup_instructions(self, provider_type: str):
         """Show setup instructions for the specified provider"""
-        print(f"❌ Error: {provider_type} not running or not accessible")
+        print(f"[ERROR] Error: {provider_type} not running or not accessible")
         print("💡 To fix this:")
         
         if provider_type == "ollama":
@@ -1961,13 +2022,13 @@ class SimpleResumeMatcher:
         Returns:
             Extracted text content
         """
-        print(f"📄 Extracting text from {file_path}...")
+        logger.info(f"Extracting text from {file_path}...")
 
         try:
             result = self.md.convert(file_path)
             return result.text_content
         except Exception as e:
-            print(f"❌ Error extracting text: {e}")
+            print(f"[ERROR] Error extracting text: {e}")
             sys.exit(1)
 
     def extract_resume_structure(self, resume_text: str) -> Dict:
@@ -1980,7 +2041,7 @@ class SimpleResumeMatcher:
         Returns:
             Structured resume data
         """
-        print("🤖 Extracting structured resume data...")
+        print("[INFO] Extracting structured resume data...")
 
         prompt = f"""
         Extract structured information from this resume and return as JSON:
@@ -2012,7 +2073,7 @@ class SimpleResumeMatcher:
             result = json.loads(json_str)
             return result
         except Exception as e:
-            print(f"❌ Error extracting structure: {e}")
+            print(f"[ERROR] Error extracting structure: {e}")
             return {"error": "Failed to extract structured data"}
 
     def extract_keywords(self, text: str, context: str = "resume") -> List[str]:
@@ -2026,24 +2087,24 @@ class SimpleResumeMatcher:
         Returns:
             List of keywords
         """
-        print(f"🔑 Extracting keywords from {context}...")
+        logger.info(f"Extracting keywords from {context}...")
 
         # Test if the model is working with a simple request first
         if not self._test_model_availability():
-            print(f"  ❌ Model is not responding properly")
-            print(f"  🔄 Falling back to basic keyword extraction")
+            print(f"  [ERROR] Model is not responding properly")
+            logger.info(f"Falling back to basic keyword extraction")
             return self._extract_basic_keywords(text, context)
 
         # Always use chunking approach to preserve all content
         try:
-            print(f"  🔄 Using intelligent chunking approach")
+            logger.verbose(f"Using intelligent chunking approach")
             keywords = self._extract_keywords_intelligent_chunking(text, context)
             if keywords:
-                print(f"  ✅ Success with {len(keywords)} keywords")
+                logger.success(f"Success with {len(keywords)} keywords")
                 return keywords
         except Exception as e:
-            print(f"  ❌ Chunking failed: {e}")
-            print(f"  🔄 Falling back to basic keyword extraction")
+            logger.error(f"Chunking failed: {e}")
+            logger.info(f"Falling back to basic keyword extraction")
             return self._extract_basic_keywords(text, context)
 
     def _extract_keywords_full_text(self, text: str, context: str) -> List[str]:
@@ -2074,7 +2135,7 @@ class SimpleResumeMatcher:
                 if result:
                     return result
             except Exception as e:
-                print(f"    ⚠️  Model {model} failed: {e}")
+                print(f"    [WARNING]  Model {model} failed: {e}")
                 continue
         
         raise Exception("All models failed for full text extraction")
@@ -2090,7 +2151,7 @@ class SimpleResumeMatcher:
         # Resume Matcher approach: smaller chunks, more focused processing
         max_chars_per_chunk = 2000  # Much smaller chunks for better reliability
         
-        print(f"    📊 Using conservative chunking: ~{max_chars_per_chunk} chars per chunk")
+        logger.verbose(f"Using conservative chunking: ~{max_chars_per_chunk} chars per chunk")
         
         # Split text into logical sections based on common resume structure
         sections = self._split_into_sections(text, context)
@@ -2098,13 +2159,13 @@ class SimpleResumeMatcher:
         all_keywords = []
         total_sections = len(sections)
         
-        print(f"    📄 Processing {total_sections} sections...")
+        logger.verbose(f"Processing {total_sections} sections...")
         
         for i, section in enumerate(sections, 1):
             if not section.strip():
                 continue
                 
-            print(f"    🔄 Processing section {i}/{total_sections} ({len(section)} chars)")
+            logger.verbose(f"Processing section {i}/{total_sections} ({len(section)} chars)")
             
             # Always split into smaller chunks for better reliability
             if len(section) > max_chars_per_chunk:
@@ -2114,7 +2175,7 @@ class SimpleResumeMatcher:
                         keywords = self._extract_keywords_from_chunk(sub_chunk, f"{context} section {i}.{j}")
                         all_keywords.extend(keywords)
                     except Exception as e:
-                        print(f"      ⚠️  Sub-chunk {i}.{j} failed: {e}")
+                        print(f"      [WARNING]  Sub-chunk {i}.{j} failed: {e}")
                         # Continue processing other chunks even if one fails
                         continue
             else:
@@ -2122,12 +2183,12 @@ class SimpleResumeMatcher:
                     keywords = self._extract_keywords_from_chunk(section, f"{context} section {i}")
                     all_keywords.extend(keywords)
                 except Exception as e:
-                    print(f"      ⚠️  Section {i} failed: {e}")
+                    print(f"      [WARNING]  Section {i} failed: {e}")
                     continue
         
         # Remove duplicates and return
         unique_keywords = list(set(all_keywords))
-        print(f"    📊 Extracted {len(unique_keywords)} unique keywords from {total_sections} sections")
+        logger.success(f"Extracted {len(unique_keywords)} unique keywords from {total_sections} sections")
         return unique_keywords
 
     def _split_into_sections(self, text: str, context: str) -> List[str]:
@@ -2206,7 +2267,7 @@ class SimpleResumeMatcher:
     def _test_model_availability(self) -> bool:
         """Test if the model can handle simple requests"""
         try:
-            print(f"    🧪 Testing {self.model_name} availability...")
+            logger.debug(f"Testing {self.model_name} availability...")
             start_time = time.time()
             test_prompt = "Extract keywords from: Python, JavaScript, React. Return comma-separated list."
             response = self.llm_client.generate(
@@ -2215,28 +2276,28 @@ class SimpleResumeMatcher:
             elapsed_time = time.time() - start_time
             
             if response and "response" in response and response["response"].strip():
-                print(f"    ✅ {self.model_name} test successful in {elapsed_time:.1f}s")
+                logger.debug(f"{self.model_name} test successful in {elapsed_time:.1f}s")
                 return True
             else:
-                print(f"    ⚠️  {self.model_name} test returned empty response in {elapsed_time:.1f}s")
+                logger.debug(f"{self.model_name} test returned empty response in {elapsed_time:.1f}s")
                 return False
                 
         except Exception as e:
             elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
             error_msg = str(e)
             
-            print(f"    ⚠️  {self.model_name} availability test failed after {elapsed_time:.1f}s")
+            print(f"    [WARNING]  {self.model_name} availability test failed after {elapsed_time:.1f}s")
             print(f"       Error: {error_msg}")
             
             # Check if it's a timeout vs actual error
             if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                print(f"    ⚠️  Model test timed out, but continuing anyway...")
+                print(f"    [WARNING]  Model test timed out, but continuing anyway...")
                 return True  # Assume model is available if it's just a timeout
             elif "500" in error_msg:
-                print(f"    ❌ Model returned 500 error - model is not working")
+                print(f"    [ERROR] Model returned 500 error - model is not working")
                 return False
             else:
-                print(f"    ⚠️  Model test failed with unknown error, but continuing...")
+                print(f"    [WARNING]  Model test failed with unknown error, but continuing...")
                 return True  # Continue anyway for other errors
 
     def _extract_keywords_from_chunk(self, chunk: str, context: str) -> List[str]:
@@ -2255,7 +2316,7 @@ class SimpleResumeMatcher:
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                print(f"      🤖 Trying {self.model_name} (attempt {attempt + 1}/{max_retries})...")
+                logger.debug(f"Trying {self.model_name} (attempt {attempt + 1}/{max_retries})...")
                 start_time = time.time()
                 response = self.llm_client.generate(
                     model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=200
@@ -2266,10 +2327,10 @@ class SimpleResumeMatcher:
                 result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]  # Filter out very long keywords
                 
                 if result:
-                    print(f"      ✅ {self.model_name} succeeded in {elapsed_time:.1f}s")
+                    logger.debug(f"{self.model_name} succeeded in {elapsed_time:.1f}s")
                     return result
                 else:
-                    print(f"      ⚠️  {self.model_name} returned empty keywords after {elapsed_time:.1f}s")
+                    logger.debug(f"{self.model_name} returned empty keywords after {elapsed_time:.1f}s")
                     
             except Exception as e:
                 elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
@@ -2277,27 +2338,27 @@ class SimpleResumeMatcher:
                 
                 # Detailed error logging
                 if "500" in error_msg:
-                    print(f"      ❌ {self.model_name} returned 500 error after {elapsed_time:.1f}s")
+                    print(f"      [ERROR] {self.model_name} returned 500 error after {elapsed_time:.1f}s")
                     print(f"         Error details: {error_msg}")
                 elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                    print(f"      ⏱️  {self.model_name} timed out after {elapsed_time:.1f}s")
+                    print(f"      [INFO]  {self.model_name} timed out after {elapsed_time:.1f}s")
                 elif "400" in error_msg:
-                    print(f"      ⚠️  {self.model_name} returned 400 error after {elapsed_time:.1f}s")
+                    print(f"      [WARNING]  {self.model_name} returned 400 error after {elapsed_time:.1f}s")
                     print(f"         Error details: {error_msg}")
                 elif "connection" in error_msg.lower():
                     print(f"      🔌 {self.model_name} connection error after {elapsed_time:.1f}s")
                     print(f"         Error details: {error_msg}")
                 else:
-                    print(f"      ❓ {self.model_name} failed after {elapsed_time:.1f}s")
+                    print(f"      [ERROR] {self.model_name} failed after {elapsed_time:.1f}s")
                     print(f"         Error details: {error_msg}")
                 
                 if attempt < max_retries - 1:
-                    print(f"      🔄 Retrying...")
+                    logger.debug(f"Retrying...")
                 else:
-                    print(f"      ❌ All retries failed for {self.model_name}")
+                    print(f"      [ERROR] All retries failed for {self.model_name}")
         
         # If primary model fails, try Mistral as fallback
-        print(f"      🔄 Trying Mistral as fallback...")
+        logger.debug(f"Trying Mistral as fallback...")
         try:
             start_time = time.time()
             response = self.llm_client.generate(
@@ -2309,18 +2370,18 @@ class SimpleResumeMatcher:
             result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]
             
             if result:
-                print(f"      ✅ Mistral fallback succeeded in {elapsed_time:.1f}s")
+                logger.debug(f"Mistral fallback succeeded in {elapsed_time:.1f}s")
                 return result
             else:
-                print(f"      ⚠️  Mistral returned empty keywords after {elapsed_time:.1f}s")
+                logger.debug(f"Mistral returned empty keywords after {elapsed_time:.1f}s")
                 
         except Exception as e:
             elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
             error_msg = str(e)
-            print(f"      ❌ Mistral fallback failed after {elapsed_time:.1f}s: {error_msg}")
+            print(f"      [ERROR] Mistral fallback failed after {elapsed_time:.1f}s: {error_msg}")
         
         # If Mistral fails, try Gemma as tertiary fallback
-        print(f"      🔄 Trying Gemma as tertiary fallback...")
+        logger.debug(f"Trying Gemma as tertiary fallback...")
         try:
             start_time = time.time()
             response = self.llm_client.generate(
@@ -2332,18 +2393,18 @@ class SimpleResumeMatcher:
             result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]
             
             if result:
-                print(f"      ✅ Gemma fallback succeeded in {elapsed_time:.1f}s")
+                logger.debug(f"Gemma fallback succeeded in {elapsed_time:.1f}s")
                 return result
             else:
-                print(f"      ⚠️  Gemma returned empty keywords after {elapsed_time:.1f}s")
+                logger.debug(f"Gemma returned empty keywords after {elapsed_time:.1f}s")
                 
         except Exception as e:
             elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
             error_msg = str(e)
-            print(f"      ❌ Gemma fallback failed after {elapsed_time:.1f}s: {error_msg}")
+            print(f"      [ERROR] Gemma fallback failed after {elapsed_time:.1f}s: {error_msg}")
         
         # If all LLM attempts fail, fall back to basic keyword extraction
-        print(f"      🔧 Falling back to basic keyword extraction...")
+        logger.info(f"Falling back to basic keyword extraction...")
         return self._extract_basic_keywords(chunk, context)
 
     def _extract_keywords_simple(self, text: str, context: str) -> List[str]:
@@ -2445,7 +2506,7 @@ class SimpleResumeMatcher:
         print("🚀 Improving resume to match job requirements...")
 
         # Always use chunked approach for better reliability (Resume Matcher strategy)
-        print(f"    🔄 Using chunked improvement approach for better reliability")
+        print(f"    [INFO] Using chunked improvement approach for better reliability")
         return self._improve_resume_chunked(resume_text, job_description, resume_keywords, job_keywords)
 
         try:
@@ -2461,7 +2522,7 @@ class SimpleResumeMatcher:
 
             return improved_resume, new_score
         except Exception as e:
-            print(f"❌ Error improving resume: {e}")
+            print(f"[ERROR] Error improving resume: {e}")
             # Return original resume and original score instead of 0.0
             original_score = self.calculate_similarity(resume_keywords, job_keywords)
             return resume_text, original_score
@@ -2473,14 +2534,14 @@ class SimpleResumeMatcher:
         sections = self._split_into_sections(resume_text, "resume")
         improved_sections = []
         
-        print(f"    📄 Improving {len(sections)} resume sections...")
+        print(f"    [INFO] Improving {len(sections)} resume sections...")
         
         for i, section in enumerate(sections, 1):
             if not section.strip():
                 improved_sections.append(section)
                 continue
                 
-            print(f"    🔄 Improving section {i}/{len(sections)}")
+            print(f"    [INFO] Improving section {i}/{len(sections)}")
             
             # Create a focused prompt for this section (Resume Matcher style)
             section_prompt = f"""
@@ -2507,7 +2568,7 @@ class SimpleResumeMatcher:
             improved_section = response["response"].strip()
             improved_sections.append(improved_section)
         except Exception as e:
-            print(f"      ⚠️  Section {i} improvement failed: {e}")
+            print(f"      [WARNING]  Section {i} improvement failed: {e}")
             improved_sections.append(section)  # Keep original if improvement fails
 
         # Combine improved sections
@@ -2614,7 +2675,7 @@ class SimpleResumeMatcher:
         self, job_description: str, job_keywords: List[str]
     ) -> str:
         """Process job description in chunks and extract key information"""
-        print("📋 Processing job description in chunks...")
+        print("[INFO] Processing job description in chunks...")
 
         chunks = self.chunk_content(job_description, max_chunk_size=3000, overlap=200)
 
@@ -2641,7 +2702,7 @@ class SimpleResumeMatcher:
                 )
                 key_info_parts.append(response["response"].strip())
             except Exception as e:
-                print(f"❌ Error processing chunk {i+1}: {e}")
+                print(f"[ERROR] Error processing chunk {i+1}: {e}")
                 # Fallback: use the chunk as-is
                 key_info_parts.append(
                     chunk[:1000] + "..." if len(chunk) > 1000 else chunk
@@ -2669,12 +2730,12 @@ class SimpleResumeMatcher:
             )
             return response["response"].strip()
         except Exception as e:
-            print(f"❌ Error creating summary: {e}")
+            print(f"[ERROR] Error creating summary: {e}")
             return combined_info
 
     def process_resume_chunks(self, resume_text: str) -> str:
         """Process resume in chunks and extract key information"""
-        print("📄 Processing resume in chunks...")
+        print("[INFO] Processing resume in chunks...")
 
         chunks = self.chunk_content(resume_text, max_chunk_size=3000, overlap=200)
 
@@ -2701,7 +2762,7 @@ class SimpleResumeMatcher:
                 )
                 key_info_parts.append(response["response"].strip())
             except Exception as e:
-                print(f"❌ Error processing chunk {i+1}: {e}")
+                print(f"[ERROR] Error processing chunk {i+1}: {e}")
                 # Fallback: use the chunk as-is
                 key_info_parts.append(
                     chunk[:1000] + "..." if len(chunk) > 1000 else chunk
@@ -2727,7 +2788,7 @@ class SimpleResumeMatcher:
             )
             return response["response"].strip()
         except Exception as e:
-            print(f"❌ Error creating summary: {e}")
+            print(f"[ERROR] Error creating summary: {e}")
             return combined_info
 
     def process_user_responses_chunks(self, user_responses: Dict) -> str:
@@ -2766,7 +2827,7 @@ class SimpleResumeMatcher:
                 )
                 key_info_parts.append(response["response"].strip())
             except Exception as e:
-                print(f"❌ Error processing chunk {i+1}: {e}")
+                print(f"[ERROR] Error processing chunk {i+1}: {e}")
                 # Fallback: use the chunk as-is
                 key_info_parts.append(
                     chunk[:800] + "..." if len(chunk) > 800 else chunk
@@ -2792,7 +2853,7 @@ class SimpleResumeMatcher:
             )
             return response["response"].strip()
         except Exception as e:
-            print(f"❌ Error creating summary: {e}")
+            print(f"[ERROR] Error creating summary: {e}")
             return combined_info
 
     def run_analysis(
@@ -2808,7 +2869,7 @@ class SimpleResumeMatcher:
         Returns:
             Analysis results
         """
-        print("🎯 Starting Resume Matcher Analysis...")
+        print("[INFO] Starting Resume Matcher Analysis...")
         print("=" * 50)
 
         # Step 1: Extract text from resume (or use previous results)
@@ -2819,7 +2880,7 @@ class SimpleResumeMatcher:
             )
         else:
             resume_text = self.extract_text_from_file(resume_file)
-            print(f"✅ Extracted {len(resume_text)} characters from resume")
+            logger.success(f"Extracted {len(resume_text)} characters from resume")
 
         # Step 2: Extract job description from various sources (or use previous results)
         if previous_results and "job_description" in previous_results:
@@ -2829,7 +2890,7 @@ class SimpleResumeMatcher:
             )
         else:
             job_description = self.job_extractor.extract_job_description(job_source)
-            print(f"✅ Extracted {len(job_description)} characters from job source")
+            logger.success(f"Extracted {len(job_description)} characters from job source")
 
         # Step 3: Extract structured data
         structured_data = self.extract_resume_structure(resume_text)
@@ -2843,9 +2904,9 @@ class SimpleResumeMatcher:
         else:
             try:
                 resume_keywords = self.extract_keywords(resume_text, "resume")
-                print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+                logger.success(f"Extracted {len(resume_keywords)} resume keywords")
             except Exception as e:
-                print(f"❌ Critical error: {e}")
+                print(f"[ERROR] Critical error: {e}")
                 print("🛑 Cannot continue without resume keywords. Please check your LLM provider connection.")
                 return {"error": "Failed to extract resume keywords", "details": str(e)}
 
@@ -2857,23 +2918,23 @@ class SimpleResumeMatcher:
         else:
             try:
                 job_keywords = self.extract_keywords(job_description, "job")
-                print(f"✅ Extracted {len(job_keywords)} job keywords")
+                logger.success(f"Extracted {len(job_keywords)} job keywords")
             except Exception as e:
-                print(f"❌ Critical error: {e}")
+                print(f"[ERROR] Critical error: {e}")
                 print("🛑 Cannot continue without job keywords. Please check your LLM provider connection.")
                 return {"error": "Failed to extract job keywords", "details": str(e)}
 
         # Step 5: Calculate initial similarity
         initial_score = self.calculate_similarity(resume_keywords, job_keywords)
-        print(f"📊 Initial match score: {initial_score:.2%}")
+        print(f"[INFO] Initial match score: {initial_score:.2%}")
 
         # Step 6: Improve resume
         improved_resume, new_score = self.improve_resume(
             resume_text, job_description, resume_keywords, job_keywords
         )
 
-        print(f"📈 Improved match score: {new_score:.2%}")
-        print(f"📈 Score improvement: {new_score - initial_score:.2%}")
+        print(f"[INFO] Improved match score: {new_score:.2%}")
+        print(f"[INFO] Score improvement: {new_score - initial_score:.2%}")
 
         # Step 7: Format results
         improved_keywords = self.extract_keywords(improved_resume, "improved resume")
@@ -2898,9 +2959,9 @@ class SimpleResumeMatcher:
         self, resume_file: str, job_source: str, previous_results: Dict = None
     ) -> Dict:
         """Conduct an interactive improvement session for a specific resume and job."""
-        print("\n" + "=" * 60)
-        print("🎯 INTERACTIVE RESUME IMPROVEMENT SESSION")
-        print("=" * 60)
+        logger.always("\n" + "=" * 60)
+        logger.always("INTERACTIVE RESUME IMPROVEMENT SESSION")
+        logger.always("=" * 60)
 
         # Use previous results if available, otherwise extract fresh data
         if previous_results and "original_resume" in previous_results:
@@ -2910,7 +2971,7 @@ class SimpleResumeMatcher:
             )
         else:
             resume_text = self.extract_text_from_file(resume_file)
-            print(f"✅ Extracted {len(resume_text)} characters from resume")
+            logger.success(f"Extracted {len(resume_text)} characters from resume")
 
         if previous_results and "job_description" in previous_results:
             job_description = previous_results["job_description"]
@@ -2919,7 +2980,7 @@ class SimpleResumeMatcher:
             )
         else:
             job_description = self.job_extractor.extract_job_description(job_source)
-            print(f"✅ Extracted {len(job_description)} characters from job source")
+            logger.success(f"Extracted {len(job_description)} characters from job source")
 
         if previous_results and "resume_keywords" in previous_results:
             resume_keywords = previous_results["resume_keywords"]
@@ -2929,9 +2990,9 @@ class SimpleResumeMatcher:
         else:
             try:
                 resume_keywords = self.extract_keywords(resume_text, "resume")
-                print(f"✅ Extracted {len(resume_keywords)} resume keywords")
+                logger.success(f"Extracted {len(resume_keywords)} resume keywords")
             except Exception as e:
-                print(f"❌ Critical error: {e}")
+                print(f"[ERROR] Critical error: {e}")
                 print("🛑 Cannot continue without resume keywords. Please check your LLM provider connection.")
                 return {"error": "Failed to extract resume keywords", "details": str(e)}
 
@@ -2943,9 +3004,9 @@ class SimpleResumeMatcher:
         else:
             try:
                 job_keywords = self.extract_keywords(job_description, "job")
-                print(f"✅ Extracted {len(job_keywords)} job keywords")
+                logger.success(f"Extracted {len(job_keywords)} job keywords")
             except Exception as e:
-                print(f"❌ Critical error: {e}")
+                print(f"[ERROR] Critical error: {e}")
                 print("🛑 Cannot continue without job keywords. Please check your LLM provider connection.")
                 return {"error": "Failed to extract job keywords", "details": str(e)}
 
@@ -2955,8 +3016,8 @@ class SimpleResumeMatcher:
             )
         )
 
-        print(f"\n📈 Final Improved Match Score: {scores[-1]:.2%}")
-        print(f"📈 Total Score Improvement: {scores[-1] - scores[0]:.2%}")
+        print(f"\n[INFO] Final Improved Match Score: {scores[-1]:.2%}")
+        print(f"[INFO] Total Score Improvement: {scores[-1] - scores[0]:.2%}")
 
         final_keywords = self.extract_keywords(improved_resume, "improved resume")
 
@@ -3014,6 +3075,15 @@ def main():
         "--interactive", action="store_true", help="Run interactive improvement session"
     )
     parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show detailed progress information"
+    )
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="Show only errors and critical messages"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Show debug information (very verbose)"
+    )
+    parser.add_argument(
         "--template",
         choices=[
             "classic_ats",
@@ -3048,9 +3118,19 @@ def main():
 
     args = parser.parse_args()
 
+    # Set logging level based on arguments
+    if args.debug:
+        logger.set_level(LogLevel.DEBUG)
+    elif args.verbose:
+        logger.set_level(LogLevel.VERBOSE)
+    elif args.quiet:
+        logger.set_level(LogLevel.QUIET)
+    else:
+        logger.set_level(LogLevel.NORMAL)
+
     # Show provider information if requested
     if args.list_providers:
-        print("🤖 AVAILABLE LLM PROVIDERS")
+        print("AVAILABLE LLM PROVIDERS")
         print("=" * 50)
         print("\n1. Ollama (Local - Recommended for privacy)")
         print("   - Free, runs locally on your machine")
@@ -3096,13 +3176,13 @@ def main():
     # Handle template generation from input file
     if args.generate_template:
         if not args.input:
-            print("❌ Error: --generate-template requires --input file")
+            print("[ERROR] Error: --generate-template requires --input file")
             print("Use --help for more information")
             sys.exit(1)
 
         # Load the input file
         if not os.path.exists(args.input):
-            print(f"❌ Error: Input file '{args.input}' not found")
+            print(f"[ERROR] Error: Input file '{args.input}' not found")
             sys.exit(1)
 
         try:
@@ -3114,14 +3194,14 @@ def main():
             required_keys = ["improved_resume"]
             missing_keys = [key for key in required_keys if key not in input_data]
             if missing_keys:
-                print(f"❌ Error: Input file missing required keys: {missing_keys}")
+                print(f"[ERROR] Error: Input file missing required keys: {missing_keys}")
                 sys.exit(1)
 
             # Initialize matcher for template generation
             matcher = SimpleResumeMatcher(args.provider, args.model, config)
 
             # Generate the template
-            print(f"📄 Generating {args.generate_template} template...")
+            print(f"[INFO] Generating {args.generate_template} template...")
             formatted_resume = matcher.improvement_advisor.generate_resume_template(
                 input_data, args.generate_template, matcher
             )
@@ -3132,22 +3212,22 @@ def main():
                     f.write(formatted_resume)
                 print(f"💾 Template saved to {args.template_output}")
             else:
-                print(f"\n📄 {args.generate_template.upper()} TEMPLATE:")
+                print(f"\n[INFO] {args.generate_template.upper()} TEMPLATE:")
                 print("=" * 50)
                 print(formatted_resume)
 
             sys.exit(0)
 
         except json.JSONDecodeError as e:
-            print(f"❌ Error: Invalid JSON in input file: {e}")
+            print(f"[ERROR] Error: Invalid JSON in input file: {e}")
             sys.exit(1)
         except Exception as e:
-            print(f"❌ Error generating template: {e}")
+            print(f"[ERROR] Error generating template: {e}")
             sys.exit(1)
 
     # Check if resume file and job source are provided (unless using input file)
     if not args.input and (not args.resume_file or not args.job_source):
-        print("❌ Error: Both resume_file and job_source are required")
+        print("[ERROR] Error: Both resume_file and job_source are required")
         print("Use --input to load previous analysis results")
         print("Use --list-templates to see available resume templates")
         print("Use --list-providers to see available LLM providers")
@@ -3161,7 +3241,7 @@ def main():
     previous_results = None
     if args.input:
         if not os.path.exists(args.input):
-            print(f"❌ Error: Input file '{args.input}' not found")
+            print(f"[ERROR] Error: Input file '{args.input}' not found")
             sys.exit(1)
 
         try:
@@ -3173,25 +3253,25 @@ def main():
             required_keys = ["original_resume", "job_description", "job_keywords"]
             missing_keys = [key for key in required_keys if key not in previous_results]
             if missing_keys:
-                print(f"❌ Error: Input file missing required keys: {missing_keys}")
+                print(f"[ERROR] Error: Input file missing required keys: {missing_keys}")
                 sys.exit(1)
 
         except json.JSONDecodeError as e:
-            print(f"❌ Error: Invalid JSON in input file: {e}")
+            print(f"[ERROR] Error: Invalid JSON in input file: {e}")
             sys.exit(1)
         except Exception as e:
-            print(f"❌ Error loading input file: {e}")
+            print(f"[ERROR] Error loading input file: {e}")
             sys.exit(1)
 
     # Check if resume file exists (only if not using input file)
     if not args.input and not os.path.exists(args.resume_file):
-        print(f"❌ Error: Resume file '{args.resume_file}' not found")
+        print(f"[ERROR] Error: Resume file '{args.resume_file}' not found")
         sys.exit(1)
 
     # Show provider information
-    print(f"🤖 Using {args.provider} provider")
+    logger.info(f"Using {args.provider} provider")
     if args.provider in ["openai", "gemini"] and not args.api_key and not os.getenv(f"{args.provider.upper()}_API_KEY"):
-        print(f"⚠️  Warning: No API key provided for {args.provider}. Set {args.provider.upper()}_API_KEY environment variable or use --api-key")
+        print(f"[WARNING]  Warning: No API key provided for {args.provider}. Set {args.provider.upper()}_API_KEY environment variable or use --api-key")
 
     try:
         if args.interactive:
@@ -3205,7 +3285,7 @@ def main():
         
         # Check if results contain an error
         if isinstance(results, dict) and "error" in results:
-            print(f"\n❌ ANALYSIS FAILED: {results['error']}")
+            print(f"\n[ERROR] ANALYSIS FAILED: {results['error']}")
             if "details" in results:
                 print(f"Details: {results['details']}")
             print("\n🔧 Troubleshooting tips:")
@@ -3216,7 +3296,7 @@ def main():
             sys.exit(1)
             
     except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
+        print(f"\n[ERROR] UNEXPECTED ERROR: {e}")
         print("\n🔧 Troubleshooting tips:")
         print("1. Check if your LLM provider (LM Studio) is running")
         print("2. Verify the model is loaded and accessible")
@@ -3226,38 +3306,38 @@ def main():
 
     # Display results
     print("\n" + "=" * 50)
-    print("📋 ANALYSIS RESULTS")
+    print("[INFO] ANALYSIS RESULTS")
     print("=" * 50)
 
     if args.interactive:
         # Interactive mode results structure
         print(
-            f"📊 Final Improved Resume Keywords: {len(results['improved_keywords'])} keywords"
+            f"[INFO] Final Improved Resume Keywords: {len(results['improved_keywords'])} keywords"
         )
         print(
-            f"📈 Original Resume Keywords: {len(results['original_keywords'])} keywords"
+            f"[INFO] Original Resume Keywords: {len(results['original_keywords'])} keywords"
         )
 
-        print(f"\n🔑 Original Keywords: {', '.join(results['original_keywords'][:10])}")
-        print(f"🔑 Job Keywords: {', '.join(results['job_keywords'][:10])}")
-        print(f"🔑 Improved Keywords: {', '.join(results['improved_keywords'][:10])}")
+        print(f"\n[INFO] Original Keywords: {', '.join(results['original_keywords'][:10])}")
+        print(f"[INFO] Job Keywords: {', '.join(results['job_keywords'][:10])}")
+        print(f"[INFO] Improved Keywords: {', '.join(results['improved_keywords'][:10])}")
 
         if args.preview:
-            print(f"\n📄 IMPROVED RESUME PREVIEW:")
+            print(f"\n[INFO] IMPROVED RESUME PREVIEW:")
             print("-" * 30)
             print(results["formatted_preview"])
     else:
         # Regular analysis mode results structure
-        print(f"📊 Original Match Score: {results['original_score']:.2%}")
-        print(f"📊 Improved Match Score: {results['improved_score']:.2%}")
-        print(f"📈 Score Improvement: {results['score_improvement']:.2%}")
+        print(f"[INFO] Original Match Score: {results['original_score']:.2%}")
+        print(f"[INFO] Improved Match Score: {results['improved_score']:.2%}")
+        print(f"[INFO] Score Improvement: {results['score_improvement']:.2%}")
 
-        print(f"\n🔑 Resume Keywords: {', '.join(results['resume_keywords'][:10])}")
-        print(f"🔑 Job Keywords: {', '.join(results['job_keywords'][:10])}")
-        print(f"🔑 New Keywords: {', '.join(results['improved_keywords'][:10])}")
+        print(f"\n[INFO] Resume Keywords: {', '.join(results['resume_keywords'][:10])}")
+        print(f"[INFO] Job Keywords: {', '.join(results['job_keywords'][:10])}")
+        print(f"[INFO] New Keywords: {', '.join(results['improved_keywords'][:10])}")
 
         if args.preview:
-            print(f"\n📄 RESUME PREVIEW:")
+            print(f"\n[INFO] RESUME PREVIEW:")
             print("-" * 30)
             print(results["formatted_preview"])
 
@@ -3269,7 +3349,7 @@ def main():
 
     # Generate formatted resume template if requested
     if args.template_output or args.template != "classic_ats":
-        print(f"\n📄 Generating {args.template} template...")
+        print(f"\n[INFO] Generating {args.template} template...")
 
         # Generate the template
         formatted_resume = matcher.improvement_advisor.generate_resume_template(
@@ -3283,11 +3363,11 @@ def main():
             print(f"💾 Formatted resume saved to {args.template_output}")
         else:
             # Show preview
-            print(f"\n📄 {args.template.upper()} TEMPLATE PREVIEW:")
+            print(f"\n[INFO] {args.template.upper()} TEMPLATE PREVIEW:")
             print("=" * 50)
             print(formatted_resume)
 
-    print(f"\n✅ Analysis complete!")
+    print(f"\n[SUCCESS] Analysis complete!")
 
 
 if __name__ == "__main__":
