@@ -1687,6 +1687,11 @@ CERTIFICATIONS
         scores = []
         user_responses = {}
         
+        # Calculate and store initial score before any improvements
+        initial_score = self.calculate_similarity(resume_keywords, job_keywords)
+        scores.append(initial_score)
+        print(f"[INFO] Initial match score: {initial_score:.2%}")
+        
         # Store self-description in user_responses for later use
         if self_description:
             user_responses["self_description"] = self_description
