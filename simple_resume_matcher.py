@@ -1655,7 +1655,31 @@ CERTIFICATIONS
         logger.always("• Any additional context about your background or career journey?")
         logger.always("\n(Feel free to include things that might not be on your current resume)")
         
-        self_description = input(f"\nYour response: ").strip()
+        print(f"\nYour response (press Enter twice when finished, or type 'file:' followed by filename):")
+        first_line = input().strip()
+        
+        if first_line.startswith("file:"):
+            # Read from file
+            filename = first_line[5:].strip()
+            try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    self_description = f.read().strip()
+                logger.success(f"Read response from file: {filename}")
+            except FileNotFoundError:
+                logger.error(f"File not found: {filename}")
+                self_description = ""
+        else:
+            # Multi-line input
+            lines = [first_line] if first_line else []
+            while True:
+                try:
+                    line = input()
+                    if line == "" and lines:  # Empty line after content means done
+                        break
+                    lines.append(line)
+                except EOFError:
+                    break
+            self_description = "\n".join(lines).strip()
         
         if not self_description or self_description.lower() in ["skip", "none", "no", "n/a"]:
             logger.info("No self-description provided, proceeding with resume analysis only")
