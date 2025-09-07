@@ -1037,21 +1037,13 @@ class ResumeImprovementAdvisor:
                 "phone": resume_data.get("structured_resume", {}).get(
                     "phone", "(402) 617-6049"
                 ),
-                "location": "Damascus, OR",  # Not in structured data, keeping default
+                "location": self._extract_contact_location(original_resume),
                 "linkedin": linkedin_url,  # Extracted from resume text
             },
-            "summary": (
-                improved_resume[:500] + "..."
-                if len(improved_resume) > 500
-                else improved_resume
-            ),
-            "skills": improved_keywords,
+            "summary": self._extract_clean_summary(improved_resume),
+            "skills": self._clean_skills_data(improved_keywords),
             "experience": self._extract_experience_from_structured_data(resume_data),
-            "education": {
-                "degree": "Bachelor of Science in Biochemistry",
-                "institution": "University of Nebraska, Lincoln",
-                "dates": "2004",
-            },
+            "education": self._extract_education_from_structured_data(resume_data),
             "certifications": certifications,  # Extracted from resume text
         }
 
@@ -1332,6 +1324,51 @@ CERTIFICATIONS
 
         return "linkedin.com/in/yourprofile"  # Default placeholder
 
+    def _extract_contact_location(self, resume_text: str) -> str:
+        """Extract contact location from resume text"""
+        import re
+        
+        # Look for address patterns in the contact section
+        address_patterns = [
+            r'(\d+\s+[A-Za-z\s,]+(?:Rd|St|Ave|Blvd|Dr|Way|Ln|Ct|Pl)[^,\n]*,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5})',
+            r'([A-Za-z\s,]+,\s*[A-Z]{2}\s+\d{5})',
+            r'([A-Za-z\s,]+,\s*[A-Z]{2})',
+        ]
+        
+        # Split into lines and look in the first few lines (contact section)
+        lines = resume_text.split('\n')[:10]  # Check first 10 lines
+        contact_section = '\n'.join(lines)
+        
+        for pattern in address_patterns:
+            match = re.search(pattern, contact_section)
+            if match:
+                address = match.group(1).strip()
+                # Extract just city, state from full address
+                city_state_match = re.search(r'([A-Za-z\s,]+),\s*([A-Z]{2})', address)
+                if city_state_match:
+                    city = city_state_match.group(1).strip()
+                    state = city_state_match.group(2).strip()
+                    return f"{city}, {state}"
+        
+        # Look for simple city, state pattern in contact section
+        simple_pattern = r'([A-Za-z\s,]+),\s*([A-Z]{2})\s+\d{5}'
+        match = re.search(simple_pattern, contact_section)
+        if match:
+            city = match.group(1).strip()
+            state = match.group(2).strip()
+            return f"{city}, {state}"
+        
+        # Look for just city, state without zip code
+        city_state_pattern = r'([A-Za-z\s,]+),\s*([A-Z]{2})'
+        match = re.search(city_state_pattern, contact_section)
+        if match:
+            city = match.group(1).strip()
+            state = match.group(2).strip()
+            return f"{city}, {state}"
+        
+        # Fallback to default
+        return "Damascus, OR"
+
     def _extract_certifications(self, resume_text: str) -> List[str]:
         """Extract certifications from resume text"""
         import re
@@ -1377,6 +1414,256 @@ CERTIFICATIONS
         
         return certifications
 
+    def _clean_skills_data(self, skills_list: List[str]) -> List[str]:
+        """Clean and filter skills data to remove prompt text and instructions"""
+        import re
+        
+        # Patterns to identify non-skill text (prompts, instructions, etc.)
+        prompt_patterns = [
+            r'please paste',
+            r'here is the list',
+            r'i\'ll be happy to',
+            r'i will return',
+            r'however',
+            r'i\'ll get started',
+            r'there are no',
+            r'and technologies for you',
+            r'once i have',
+            r'focusing on',
+            r'and key competencies',
+            r'and technologies in a comma-separated list',
+            r'from a different section',
+            r'please let me know',
+            r'avoiding generic terms',
+            r'or platforms',
+            r'talks and presentations',
+            r'and other non-technical information',
+            r'team growth',
+            r'team creation',
+            r'process',
+            r'methodologies',
+            r'tools',
+            r'platforms',
+            r'frameworks',
+            r'optimization',
+            r'optimizing',
+            r'building',
+            r'architecture design',
+            r'performance optimization',
+            r'performance tuning',
+            r'benchmarking'
+        ]
+        
+        # Valid technical skills patterns
+        valid_skills = [
+            # Programming languages
+            'Java', 'Python', 'BASH', 'PHP', 'C++', 'C#', 'JavaScript', 'Go', 'Rust', 'Scala',
+            # Cloud platforms
+            'AWS', 'Azure', 'GCP', 'Google Cloud',
+            # Containerization
+            'Kubernetes', 'Docker', 'KNative',
+            # Big Data
+            'Hadoop', 'HDFS', 'HBase', 'Spark', 'Pig', 'Flume', 'Solr',
+            # Databases
+            'MySQL', 'PostgreSQL', 'MongoDB', 'Cassandra',
+            # DevOps tools
+            'Puppet', 'Ansible', 'Terraform', 'Jenkins', 'Git',
+            # Operating systems
+            'Linux', 'Windows', 'OSX', 'FreeBSD',
+            # Other technologies
+            'Splunk', 'Apache', 'Nginx', 'OpenJDK', 'MPI', 'OpenMP',
+            # Companies/Products
+            'Siri', 'Apple', 'Hortonworks', 'Cloudera', 'VMWare',
+            # Specific technologies
+            'EKS', 'ECUs', 'OLAP', 'ML pipelines', 'CI/CD', 'SRE/DevOps', 'SRE',
+            'Big Data architecture', 'Infrastructure design', 'System design',
+            'Backup system design', 'Vendor replacement', 'Audibility', 'Compliance',
+            'PBS/Torque', 'SGE', 'Globus', 'Condor', 'Postfix', 'NIS',
+            'FastA', 'BLAST', 'GCG', 'mFold', 'Beowulf'
+        ]
+        
+        cleaned_skills = []
+        
+        for skill in skills_list:
+            skill = skill.strip()
+            
+            # Skip empty or very short items
+            if len(skill) < 2:
+                continue
+                
+            # Skip items that match prompt patterns
+            if any(re.search(pattern, skill, re.IGNORECASE) for pattern in prompt_patterns):
+                continue
+                
+            # Skip items that are clearly not technical skills
+            if any(phrase in skill.lower() for phrase in [
+                'please', 'here is', 'i\'ll', 'however', 'there are', 'once i',
+                'and technologies for you', 'focusing on', 'and key competencies',
+                'from a different section', 'avoiding generic', 'talks and presentations'
+            ]):
+                continue
+                
+            # Include items that are valid technical skills or contain them
+            if any(valid_skill.lower() in skill.lower() for valid_skill in valid_skills):
+                cleaned_skills.append(skill)
+            elif len(skill) < 50 and not any(char in skill for char in ['(', ')', '\n', '\t']):
+                # Include short, clean items that don't contain special characters
+                cleaned_skills.append(skill)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_skills = []
+        for skill in cleaned_skills:
+            if skill.lower() not in seen:
+                seen.add(skill.lower())
+                unique_skills.append(skill)
+        
+        return unique_skills[:20]  # Limit to top 20 skills
+
+    def _extract_clean_summary(self, improved_resume: str) -> str:
+        """Extract and clean the summary section from improved resume"""
+        import re
+        
+        # Look for the summary section in the improved resume
+        summary_patterns = [
+            r'\*\*Summary\*\*\s*\n(.*?)(?=\n\*\*|\n##|\n#|\n\n\n|$)',
+            r'## Summary\s*\n(.*?)(?=\n##|\n#|\n\n\n|$)',
+            r'# Summary\s*\n(.*?)(?=\n##|\n#|\n\n\n|$)',
+        ]
+        
+        for pattern in summary_patterns:
+            match = re.search(pattern, improved_resume, re.DOTALL | re.IGNORECASE)
+            if match:
+                summary = match.group(1).strip()
+                # Clean up the summary
+                summary = re.sub(r'\s+', ' ', summary)  # Normalize whitespace
+                summary = summary.strip()
+                
+                # If summary is too long, try to find a good breaking point
+                if len(summary) > 800:
+                    # Try to break at sentence boundaries
+                    sentences = re.split(r'[.!?]+', summary)
+                    truncated = ""
+                    for sentence in sentences:
+                        if len(truncated + sentence) <= 800:
+                            truncated += sentence + "."
+                        else:
+                            break
+                    if truncated:
+                        return truncated.strip()
+                
+                return summary
+        
+        # Fallback: if no summary section found, use the beginning of the improved resume
+        # but clean it up and limit to reasonable length
+        fallback_text = improved_resume.strip()
+        if len(fallback_text) > 800:
+            # Try to break at sentence boundaries
+            sentences = re.split(r'[.!?]+', fallback_text)
+            truncated = ""
+            for sentence in sentences:
+                if len(truncated + sentence) <= 800:
+                    truncated += sentence + "."
+                else:
+                    break
+            if truncated:
+                return truncated.strip()
+        
+        return fallback_text
+
+    def _extract_education_from_structured_data(self, resume_data: Dict) -> Dict:
+        """Extract education information from structured resume data"""
+        # Check if we have structured resume data
+        if (
+            "structured_resume" in resume_data
+            and "education" in resume_data["structured_resume"]
+            and resume_data["structured_resume"]["education"]
+        ):
+            education = resume_data["structured_resume"]["education"][0]  # Get first education entry
+            degree = education.get("degree", "").strip()
+            
+            # If degree is empty, extract from original resume
+            if not degree:
+                original_resume = resume_data.get("original_resume", "")
+                extracted_education = self._extract_education_from_original_resume(original_resume)
+                return {
+                    "degree": extracted_education.get("degree", "Degree"),
+                    "institution": education.get("institution", extracted_education.get("institution", "Institution")),
+                    "dates": education.get("year", extracted_education.get("dates", "Dates")),
+                }
+            else:
+                return {
+                    "degree": degree,
+                    "institution": education.get("institution", "Institution"),
+                    "dates": education.get("year", "Dates"),
+                }
+        else:
+            # Fallback: extract from original resume text
+            original_resume = resume_data.get("original_resume", "")
+            return self._extract_education_from_original_resume(original_resume)
+
+    def _extract_education_from_original_resume(self, original_resume: str) -> Dict:
+        """Extract education information from original resume text"""
+        import re
+        
+        # Look for education patterns
+        education_patterns = [
+            r'University of Nebraska.*?Lincoln.*?Bachelor of Science in ([^,\n]+).*?\(Graduation (\d{4})\)',
+            r'Bachelor of Science in ([^,\n]+).*?University of Nebraska.*?Lincoln.*?(\d{4})',
+            r'Bachelor.*?in\s+([^,\n]+).*?University of Nebraska.*?Lincoln.*?(\d{4})',
+            r'University of Nebraska.*?Lincoln.*?Bachelor.*?in\s+([^,\n]+).*?(\d{4})',
+            r'Bachelor of Science in ([^,\n]+).*?(\d{4})',
+        ]
+        
+        for pattern in education_patterns:
+            match = re.search(pattern, original_resume, re.IGNORECASE | re.DOTALL)
+            if match:
+                degree = match.group(1).strip()
+                year = match.group(2).strip()
+                return {
+                    "degree": f"Bachelor of Science in {degree}",
+                    "institution": "University of Nebraska, Lincoln",
+                    "dates": year,
+                }
+        
+        # Fallback to default values
+        return {
+            "degree": "Bachelor of Science in Biochemistry",
+            "institution": "University of Nebraska, Lincoln", 
+            "dates": "2004",
+        }
+
+    def _extract_location_from_original_resume(self, original_resume: str, company: str, title: str) -> str:
+        """Extract location information from original resume text for a specific job"""
+        import re
+        
+        # Look for patterns like "Company Name (City, State)" or "Title; Company (City, State)"
+        # Try multiple patterns to match different resume formats
+        
+        # Pattern 1: Company (City, State)
+        company_pattern = rf"{re.escape(company)}\s*\(([^)]+)\)"
+        match = re.search(company_pattern, original_resume, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        
+        # Pattern 2: Title; Company (City, State)
+        title_company_pattern = rf"{re.escape(title)}[^;]*;\s*{re.escape(company)}\s*\(([^)]+)\)"
+        match = re.search(title_company_pattern, original_resume, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        
+        # Pattern 3: Look for any line containing both company and location pattern
+        lines = original_resume.split('\n')
+        for line in lines:
+            if company.lower() in line.lower():
+                # Look for (City, State) pattern in the same line
+                location_match = re.search(r'\(([A-Za-z\s,]+)\)', line)
+                if location_match:
+                    return location_match.group(1).strip()
+        
+        # Fallback: return "Location" if not found
+        return "Location"
+
     def _extract_experience_from_structured_data(self, resume_data: Dict) -> List[Dict]:
         """Extract experience information from structured resume data"""
         experience = []
@@ -1387,6 +1674,7 @@ CERTIFICATIONS
             and "experience" in resume_data["structured_resume"]
         ):
             structured_experience = resume_data["structured_resume"]["experience"]
+            original_resume = resume_data.get("original_resume", "")
 
             for job in structured_experience:
                 # Extract achievements from description
@@ -1413,12 +1701,17 @@ CERTIFICATIONS
                             # If no bullet points, treat each line as an achievement
                             achievements.append(line)
 
+                # Extract location from original resume text
+                location = self._extract_location_from_original_resume(
+                    original_resume, job.get("company", ""), job.get("title", "")
+                )
+
                 experience.append(
                     {
                         "title": job.get("title", "Job Title"),
                         "company": job.get("company", "Company Name"),
                         "dates": job.get("duration", "Dates"),
-                        "location": "Location",  # Not available in structured data
+                        "location": location,
                         "achievements": achievements,
                     }
                 )
@@ -1606,7 +1899,13 @@ CERTIFICATIONS
             )
             spinner.stop()
             print("[SUCCESS] Resume integration complete!")
-            return response["response"].strip()
+            improved_resume = response["response"].strip()
+            
+            # Check if the improved resume is actually different
+            if improved_resume == resume_text:
+                print("[WARNING] Improved resume is identical to original resume - LLM may not have made changes")
+            
+            return improved_resume
         except Exception as e:
             spinner.stop()
             print(f"[ERROR] Error integrating responses: {e}")
@@ -1624,13 +1923,21 @@ CERTIFICATIONS
                     )
                     spinner.stop()
                     print(f"[SUCCESS] Successfully used fallback model: {fallback_model}")
-                    return response["response"].strip()
+                    improved_resume = response["response"].strip()
+                    
+                    # Check if the improved resume is actually different
+                    if improved_resume == resume_text:
+                        print("[WARNING] Fallback improved resume is identical to original resume")
+                    
+                    return improved_resume
                 else:
                     print("[ERROR] Fallback model is same as current model")
+                    print("[WARNING] Returning original resume due to LLM failure")
                     return resume_text
             except Exception as fallback_error:
                 spinner.stop()
                 print(f"[ERROR] Fallback model also failed: {fallback_error}")
+                print("[WARNING] Returning original resume due to LLM failure")
                 return resume_text
 
     def collect_candidate_self_description(self, job_description: str) -> str:
@@ -1690,6 +1997,7 @@ CERTIFICATIONS
         # Calculate and store initial score before any improvements
         initial_score = self.calculate_similarity(resume_keywords, job_keywords)
         scores.append(initial_score)
+        
         print(f"[INFO] Initial match score: {initial_score:.2%}")
         
         # Store self-description in user_responses for later use
@@ -1830,7 +2138,28 @@ CERTIFICATIONS
                 model=self.model_name, prompt=prompt, temperature=0.1
             )
 
-            keywords = [kw.strip() for kw in response["response"].split(",")]
+            # Clean the response to extract only the keywords
+            response_text = response["response"].strip()
+            
+            # Remove common prompt prefixes that LLMs sometimes include
+            prefixes_to_remove = [
+                "Here is the list of extracted keywords:",
+                "Here are the extracted keywords:",
+                "Keywords:",
+                "The keywords are:",
+                "Extracted keywords:",
+            ]
+            
+            for prefix in prefixes_to_remove:
+                if response_text.lower().startswith(prefix.lower()):
+                    response_text = response_text[len(prefix):].strip()
+                    break
+            
+            # Remove newlines and extra whitespace
+            response_text = " ".join(response_text.split())
+            
+            # Split by commas and clean each keyword
+            keywords = [kw.strip() for kw in response_text.split(",")]
             return [kw for kw in keywords if kw and len(kw) > 2]
         except Exception as e:
             print(f"[ERROR] Error extracting keywords: {e}")
@@ -2080,7 +2409,7 @@ class SimpleResumeMatcher:
 
     def extract_resume_structure(self, resume_text: str) -> Dict:
         """
-        Extract structured data from resume text using LLM.
+        Extract structured data from resume text using LLM with intelligent chunking.
 
         Args:
             resume_text: Raw resume text
@@ -2088,8 +2417,21 @@ class SimpleResumeMatcher:
         Returns:
             Structured resume data
         """
-        print("[INFO] Extracting structured resume data...")
+        print("[INFO] Extracting structured resume data with chunking...")
 
+        # Check if we need chunking based on text length
+        estimated_tokens = len(resume_text) // 4
+        token_limit = 4000  # Conservative limit for structure extraction
+        
+        if estimated_tokens < token_limit:
+            print(f"[INFO] Resume fits within token limit ({estimated_tokens} < {token_limit}), using direct extraction")
+            return self._extract_structure_direct(resume_text)
+        else:
+            print(f"[INFO] Resume exceeds token limit ({estimated_tokens} > {token_limit}), using chunked extraction")
+            return self._extract_structure_intelligent_chunking(resume_text)
+
+    def _extract_structure_direct(self, resume_text: str) -> Dict:
+        """Extract structure directly for smaller resumes"""
         prompt = f"""
         Extract structured information from this resume and return as JSON:
 
@@ -2104,12 +2446,14 @@ class SimpleResumeMatcher:
         - education: array of objects with degree, institution, year
         - skills: array of strings
 
+        IMPORTANT: Extract ALL experience entries, not just recent ones. Include every job position mentioned in the resume.
+
         Only return valid JSON, no other text.
         """
 
         try:
             response = self.llm_client.generate(
-                model=self.model_name, prompt=prompt, temperature=0.1
+                model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=8000
             )
 
             # Extract JSON from response
@@ -2120,8 +2464,195 @@ class SimpleResumeMatcher:
             result = json.loads(json_str)
             return result
         except Exception as e:
-            print(f"[ERROR] Error extracting structure: {e}")
+            print(f"[ERROR] Error extracting structure directly: {e}")
             return {"error": "Failed to extract structured data"}
+
+    def _extract_structure_intelligent_chunking(self, resume_text: str) -> Dict:
+        """Extract structure using intelligent chunking that preserves all content"""
+        
+        # Get model capabilities to determine optimal chunk sizes
+        model_caps = self.llm_client.get_model_capabilities()
+        max_input_tokens = model_caps.get("max_input_tokens", 4000)
+        
+        # Use conservative chunking for structure extraction
+        max_chars_per_chunk = 2000
+        
+        print(f"[INFO] Using conservative chunking: ~{max_chars_per_chunk} chars per chunk")
+        
+        # Split text into logical sections
+        sections = self._split_into_sections(resume_text, "resume")
+        
+        # Extract basic info from first section (usually contact/profile)
+        basic_info = {}
+        experience_entries = []
+        education_entries = []
+        skills_list = []
+        
+        total_sections = len(sections)
+        print(f"[INFO] Processing {total_sections} sections...")
+        
+        for i, section in enumerate(sections, 1):
+            if not section.strip():
+                continue
+                
+            print(f"[INFO] Processing section {i}/{total_sections} ({len(section)} chars)")
+            
+            # Process section based on content
+            if i == 1 or "PROFILE" in section.upper() or "SUMMARY" in section.upper():
+                # Extract basic info from first section
+                basic_info = self._extract_basic_info_from_section(section)
+            elif "EXPERIENCE" in section.upper() or "EMPLOYMENT" in section.upper():
+                # Extract experience entries
+                exp_entries = self._extract_experience_from_section(section)
+                experience_entries.extend(exp_entries)
+            elif "EDUCATION" in section.upper():
+                # Extract education entries
+                edu_entries = self._extract_education_from_section(section)
+                education_entries.extend(edu_entries)
+            elif "SKILLS" in section.upper() or "COMPETENCIES" in section.upper():
+                # Extract skills
+                skills = self._extract_skills_from_section(section)
+                skills_list.extend(skills)
+            else:
+                # Try to extract any experience entries from other sections
+                exp_entries = self._extract_experience_from_section(section)
+                if exp_entries:
+                    experience_entries.extend(exp_entries)
+        
+        # Combine all extracted data
+        result = {
+            "name": basic_info.get("name", "Unknown"),
+            "email": basic_info.get("email", ""),
+            "phone": basic_info.get("phone", ""),
+            "summary": basic_info.get("summary", ""),
+            "experience": experience_entries,
+            "education": education_entries,
+            "skills": list(set(skills_list))  # Remove duplicates
+        }
+        
+        print(f"[SUCCESS] Extracted {len(experience_entries)} experience entries, {len(education_entries)} education entries, {len(skills_list)} skills")
+        return result
+
+    def _extract_basic_info_from_section(self, section: str) -> Dict:
+        """Extract basic info (name, email, phone, summary) from a section"""
+        prompt = f"""
+        Extract basic information from this resume section and return as JSON:
+
+        {section}
+
+        Return a JSON object with these fields:
+        - name: string (full name)
+        - email: string (email address if found)
+        - phone: string (phone number if found)
+        - summary: string (profile/summary text if found)
+
+        Only return valid JSON, no other text.
+        """
+
+        try:
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=1000
+            )
+
+            json_start = response["response"].find("{")
+            json_end = response["response"].rfind("}") + 1
+            json_str = response["response"][json_start:json_end]
+
+            result = json.loads(json_str)
+            return result
+        except Exception as e:
+            print(f"[WARNING] Error extracting basic info: {e}")
+            return {}
+
+    def _extract_experience_from_section(self, section: str) -> List[Dict]:
+        """Extract experience entries from a section"""
+        prompt = f"""
+        Extract ALL work experience entries from this resume section and return as JSON:
+
+        {section}
+
+        Return a JSON array of objects, where each object has:
+        - title: string (job title)
+        - company: string (company name)
+        - duration: string (employment dates)
+        - description: string (job description/achievements)
+
+        IMPORTANT: Extract EVERY job position mentioned, including older positions. Do not skip any experience entries.
+
+        Only return valid JSON array, no other text.
+        """
+
+        try:
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=4000
+            )
+
+            json_start = response["response"].find("[")
+            json_end = response["response"].rfind("]") + 1
+            json_str = response["response"][json_start:json_end]
+
+            result = json.loads(json_str)
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            print(f"[WARNING] Error extracting experience: {e}")
+            return []
+
+    def _extract_education_from_section(self, section: str) -> List[Dict]:
+        """Extract education entries from a section"""
+        prompt = f"""
+        Extract education information from this resume section and return as JSON:
+
+        {section}
+
+        Return a JSON array of objects, where each object has:
+        - degree: string (degree type)
+        - institution: string (school/university name)
+        - year: string (graduation year or date range)
+
+        Only return valid JSON array, no other text.
+        """
+
+        try:
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=1000
+            )
+
+            json_start = response["response"].find("[")
+            json_end = response["response"].rfind("]") + 1
+            json_str = response["response"][json_start:json_end]
+
+            result = json.loads(json_str)
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            print(f"[WARNING] Error extracting education: {e}")
+            return []
+
+    def _extract_skills_from_section(self, section: str) -> List[str]:
+        """Extract skills from a section"""
+        prompt = f"""
+        Extract skills and competencies from this resume section and return as JSON:
+
+        {section}
+
+        Return a JSON array of strings, where each string is a skill or competency.
+
+        Only return valid JSON array, no other text.
+        """
+
+        try:
+            response = self.llm_client.generate(
+                model=self.model_name, prompt=prompt, temperature=0.1, max_tokens=1000
+            )
+
+            json_start = response["response"].find("[")
+            json_end = response["response"].rfind("]") + 1
+            json_str = response["response"][json_start:json_end]
+
+            result = json.loads(json_str)
+            return result if isinstance(result, list) else []
+        except Exception as e:
+            print(f"[WARNING] Error extracting skills: {e}")
+            return []
 
     def extract_keywords(self, text: str, context: str = "resume") -> List[str]:
         """
@@ -2370,7 +2901,28 @@ class SimpleResumeMatcher:
                 )
                 elapsed_time = time.time() - start_time
                 
-                keywords = [kw.strip() for kw in response["response"].split(",")]
+                # Clean the response to extract only the keywords
+                response_text = response["response"].strip()
+                
+                # Remove common prompt prefixes that LLMs sometimes include
+                prefixes_to_remove = [
+                    "Here is the list of extracted keywords:",
+                    "Here are the extracted keywords:",
+                    "Keywords:",
+                    "The keywords are:",
+                    "Extracted keywords:",
+                ]
+                
+                for prefix in prefixes_to_remove:
+                    if response_text.lower().startswith(prefix.lower()):
+                        response_text = response_text[len(prefix):].strip()
+                        break
+                
+                # Remove newlines and extra whitespace
+                response_text = " ".join(response_text.split())
+                
+                # Split by commas and clean each keyword
+                keywords = [kw.strip() for kw in response_text.split(",")]
                 result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]  # Filter out very long keywords
                 
                 if result:
@@ -3063,6 +3615,14 @@ class SimpleResumeMatcher:
             )
         )
 
+        # Add safety checks for scores array
+        if not scores:
+            print(f"\n[ERROR] No scores calculated - this indicates a problem with the improvement process")
+            return {"error": "No scores calculated", "details": "The improvement process failed to calculate any scores"}
+        
+        if len(scores) < 2:
+            print(f"\n[WARNING] Only {len(scores)} score(s) calculated - improvement process may have been interrupted")
+        
         print(f"\n[INFO] Final Improved Match Score: {scores[-1]:.2%}")
         print(f"[INFO] Total Score Improvement: {scores[-1] - scores[0]:.2%}")
 
@@ -3072,12 +3632,12 @@ class SimpleResumeMatcher:
             "original_keywords": resume_keywords,
             "job_keywords": job_keywords,
             "improved_keywords": final_keywords,
-            "structured_resume": self.extract_resume_structure(improved_resume),
+            "structured_resume": self.extract_resume_structure(resume_text),
             "original_resume": resume_text,
             "improved_resume": improved_resume,
             "job_description": job_description,
             "formatted_preview": self.format_resume_preview(
-                self.extract_resume_structure(improved_resume)
+                self.extract_resume_structure(resume_text)
             ),
         }
 
