@@ -597,6 +597,112 @@ class ResumeImprovementAdvisor:
             "relevance": "Remove irrelevant information and focus on job requirements",
         }
 
+        # Initialize resume templates
+        self._initialize_resume_templates()
+
+    def _clean_llm_response(self, response_text: str, response_type: str = "general") -> str:
+        """Clean LLM responses to remove prompt text and formatting artifacts"""
+        if not response_text:
+            return ""
+        
+        # Remove common prompt prefixes and artifacts
+        prefixes_to_remove = [
+            "Here is the list of extracted keywords:",
+            "Here are the extracted keywords:",
+            "Keywords:",
+            "The keywords are:",
+            "Extracted keywords:",
+            "Here is the improved resume:",
+            "Here is the resume:",
+            "Here's the resume:",
+            "Here's the improved resume:",
+            "Here is the list of technical skills",
+            "and technologies for you.",
+            "and key competencies",
+            "but based on the provided text",
+            "if we're being generous with what's implied",
+            "I'd say: None explicitly mentioned",
+            "I can add it as well",
+            "However",
+            "please let me know!",
+            "I'll get started!",
+            "I will return the following:",
+            "Final Cut Pro I removed",
+            "since you asked for",
+            "these specific technologies seem more relevant.",
+            "but implied are expertise in",
+            "and possibly",
+            "Time-to-market delivery. However",
+            "**Summary:**",
+            "**Professional Experience:**",
+            "**Skills:**",
+            "**Achievements:**",
+            "**Education:**",
+        ]
+        
+        # Clean the response
+        cleaned_text = response_text.strip()
+        
+        # Remove prefixes
+        for prefix in prefixes_to_remove:
+            if cleaned_text.lower().startswith(prefix.lower()):
+                cleaned_text = cleaned_text[len(prefix):].strip()
+                break
+        
+        # Remove newlines and normalize whitespace
+        cleaned_text = " ".join(cleaned_text.split())
+        
+        # Remove common LLM artifacts
+        artifacts_to_remove = [
+            "Here is the list of technical skills",
+            "and technologies for you.",
+            "and key competencies",
+            "but based on the provided text",
+            "if we're being generous with what's implied",
+            "I'd say: None explicitly mentioned",
+            "I can add it as well",
+            "However",
+            "please let me know!",
+            "I'll get started!",
+            "I will return the following:",
+            "Final Cut Pro I removed",
+            "since you asked for",
+            "these specific technologies seem more relevant.",
+            "but implied are expertise in",
+            "and possibly",
+            "Time-to-market delivery. However",
+        ]
+        
+        for artifact in artifacts_to_remove:
+            cleaned_text = cleaned_text.replace(artifact, "").strip()
+        
+        # Clean up any remaining artifacts
+        cleaned_text = cleaned_text.replace("  ", " ").strip()
+        
+        return cleaned_text
+
+    def _show_provider_setup_instructions(self, provider_type: str):
+        """Show setup instructions for the specified provider"""
+        print(f"[ERROR] Error: {provider_type} not running or not accessible")
+        print("💡 To fix this:")
+        
+        if provider_type == "ollama":
+            print("   1. Install Ollama from https://ollama.ai/")
+            print("   2. Start Ollama: ollama serve")
+            print("   3. Pull a model: ollama pull llama3.1")
+        elif provider_type == "openai":
+            print("   1. Get API key from https://platform.openai.com/api-keys")
+            print("   2. Set OPENAI_API_KEY environment variable")
+        elif provider_type == "gemini":
+            print("   1. Get API key from https://makersuite.google.com/app/apikey")
+            print("   2. Set GEMINI_API_KEY environment variable")
+        elif provider_type == "lmstudio":
+            print("   1. Install LM Studio from https://lmstudio.ai/")
+            print("   2. Start local server in LM Studio")
+            print("   3. Load a model and start the server")
+
+    def _initialize_resume_templates(self):
+        """Initialize resume template definitions"""
         # Resume template definitions based on expert analysis
         self.resume_templates = {
             "classic_ats": {
@@ -1899,7 +2005,7 @@ CERTIFICATIONS
             )
             spinner.stop()
             print("[SUCCESS] Resume integration complete!")
-            improved_resume = response["response"].strip()
+            improved_resume = self._clean_llm_response(response["response"], "resume")
             
             # Check if the improved resume is actually different
             if improved_resume == resume_text:
@@ -1923,7 +2029,7 @@ CERTIFICATIONS
                     )
                     spinner.stop()
                     print(f"[SUCCESS] Successfully used fallback model: {fallback_model}")
-                    improved_resume = response["response"].strip()
+                    improved_resume = self._clean_llm_response(response["response"], "resume")
                     
                     # Check if the improved resume is actually different
                     if improved_resume == resume_text:
@@ -2138,28 +2244,11 @@ CERTIFICATIONS
                 model=self.model_name, prompt=prompt, temperature=0.1
             )
 
-            # Clean the response to extract only the keywords
-            response_text = response["response"].strip()
-            
-            # Remove common prompt prefixes that LLMs sometimes include
-            prefixes_to_remove = [
-                "Here is the list of extracted keywords:",
-                "Here are the extracted keywords:",
-                "Keywords:",
-                "The keywords are:",
-                "Extracted keywords:",
-            ]
-            
-            for prefix in prefixes_to_remove:
-                if response_text.lower().startswith(prefix.lower()):
-                    response_text = response_text[len(prefix):].strip()
-                    break
-            
-            # Remove newlines and extra whitespace
-            response_text = " ".join(response_text.split())
+            # Clean the response using the centralized cleaning function
+            cleaned_response = self._clean_llm_response(response["response"], "keywords")
             
             # Split by commas and clean each keyword
-            keywords = [kw.strip() for kw in response_text.split(",")]
+            keywords = [kw.strip() for kw in cleaned_response.split(",")]
             return [kw for kw in keywords if kw and len(kw) > 2]
         except Exception as e:
             print(f"[ERROR] Error extracting keywords: {e}")
@@ -2168,19 +2257,58 @@ CERTIFICATIONS
     def calculate_similarity(
         self, resume_keywords: List[str], job_keywords: List[str]
     ) -> float:
-        """Calculate similarity between resume and job keywords"""
+        """Calculate similarity between resume and job keywords with improved matching"""
 
         if not resume_keywords or not job_keywords:
             return 0.0
 
-        # Simple Jaccard similarity
-        resume_set = set(resume_keywords)
-        job_set = set(job_keywords)
-
-        intersection = len(resume_set.intersection(job_set))
-        union = len(resume_set.union(job_set))
-
-        return intersection / union if union > 0 else 0.0
+        # Convert to lowercase for case-insensitive matching
+        resume_set = set([kw.lower() for kw in resume_keywords])
+        job_set = set([kw.lower() for kw in job_keywords])
+        
+        # Direct matches
+        direct_matches = resume_set.intersection(job_set)
+        
+        # Partial matches (one keyword contains another)
+        partial_matches = set()
+        for kw1 in resume_set:
+            for kw2 in job_set:
+                if kw1 in kw2 or kw2 in kw1:
+                    partial_matches.add(kw1)
+                    partial_matches.add(kw2)
+        
+        # Synonym matches
+        synonyms = {
+            "artificial intelligence": ["ai", "ai/ml", "machine learning", "ml"],
+            "machine learning": ["ai", "ai/ml", "artificial intelligence", "ml"],
+            "ai/ml": ["ai", "artificial intelligence", "machine learning", "ml"],
+            "computer architecture": ["architecture", "system architecture", "infrastructure design"],
+            "architecture design": ["computer architecture", "system architecture", "infrastructure design"],
+            "performance simulation": ["simulation", "performance", "modeling"],
+            "system optimization": ["optimization", "performance", "efficiency"],
+        }
+        
+        synonym_matches = set()
+        for kw1 in resume_set:
+            for kw2 in job_set:
+                # Check if either keyword has synonyms that match the other
+                for base_term, syns in synonyms.items():
+                    if (kw1 == base_term and kw2 in syns) or (kw2 == base_term and kw1 in syns):
+                        synonym_matches.add(kw1)
+                        synonym_matches.add(kw2)
+                    elif kw1 in syns and kw2 in syns:
+                        synonym_matches.add(kw1)
+                        synonym_matches.add(kw2)
+        
+        # Combine all matches
+        all_matches = direct_matches.union(partial_matches).union(synonym_matches)
+        
+        # Calculate similarity
+        union = resume_set.union(job_set)
+        if len(union) == 0:
+            return 0.0
+        
+        return len(all_matches) / len(union)
 
 
 class JobDescriptionExtractor:
@@ -2354,11 +2482,90 @@ class SimpleResumeMatcher:
         if self.model_name is None:
             self.model_name = self.improvement_advisor.model_name
 
-        # Validate provider connection
-        if not self.llm_client.validate_connection(self.model_name):
-            self._show_provider_setup_instructions(provider_type)
-            sys.exit(1)
-    
+        # Initialize resume templates
+        self._initialize_resume_templates()
+
+    def _clean_llm_response(self, response_text: str, response_type: str = "general") -> str:
+        """Clean LLM responses to remove prompt text and formatting artifacts"""
+        if not response_text:
+            return ""
+        
+        # Remove common prompt prefixes and artifacts
+        prefixes_to_remove = [
+            "Here is the list of extracted keywords:",
+            "Here are the extracted keywords:",
+            "Keywords:",
+            "The keywords are:",
+            "Extracted keywords:",
+            "Here is the improved resume:",
+            "Here is the resume:",
+            "Here's the resume:",
+            "Here's the improved resume:",
+            "Here is the list of technical skills",
+            "and technologies for you.",
+            "and key competencies",
+            "but based on the provided text",
+            "if we're being generous with what's implied",
+            "I'd say: None explicitly mentioned",
+            "I can add it as well",
+            "However",
+            "please let me know!",
+            "I'll get started!",
+            "I will return the following:",
+            "Final Cut Pro I removed",
+            "since you asked for",
+            "these specific technologies seem more relevant.",
+            "but implied are expertise in",
+            "and possibly",
+            "Time-to-market delivery. However",
+            "**Summary:**",
+            "**Professional Experience:**",
+            "**Skills:**",
+            "**Achievements:**",
+            "**Education:**",
+        ]
+        
+        # Clean the response
+        cleaned_text = response_text.strip()
+        
+        # Remove prefixes
+        for prefix in prefixes_to_remove:
+            if cleaned_text.lower().startswith(prefix.lower()):
+                cleaned_text = cleaned_text[len(prefix):].strip()
+                break
+        
+        # Remove newlines and normalize whitespace
+        cleaned_text = " ".join(cleaned_text.split())
+        
+        # Remove common LLM artifacts
+        artifacts_to_remove = [
+            "Here is the list of technical skills",
+            "and technologies for you.",
+            "and key competencies",
+            "but based on the provided text",
+            "if we're being generous with what's implied",
+            "I'd say: None explicitly mentioned",
+            "I can add it as well",
+            "However",
+            "please let me know!",
+            "I'll get started!",
+            "I will return the following:",
+            "Final Cut Pro I removed",
+            "since you asked for",
+            "these specific technologies seem more relevant.",
+            "but implied are expertise in",
+            "and possibly",
+            "Time-to-market delivery. However",
+        ]
+        
+        for artifact in artifacts_to_remove:
+            cleaned_text = cleaned_text.replace(artifact, "").strip()
+        
+        # Clean up any remaining artifacts
+        cleaned_text = cleaned_text.replace("  ", " ").strip()
+        
+        return cleaned_text
+
     def _show_provider_setup_instructions(self, provider_type: str):
         """Show setup instructions for the specified provider"""
         print(f"[ERROR] Error: {provider_type} not running or not accessible")
@@ -2387,6 +2594,63 @@ class SimpleResumeMatcher:
             print("   5. Run this script again")
         
         print(f"   💡 Or try a different provider with: --provider ollama")
+
+    def _initialize_resume_templates(self):
+        """Initialize resume template definitions"""
+        # Resume template definitions based on expert analysis
+        self.resume_templates = {
+            "classic_ats": {
+                "name": "Classic ATS-Optimized",
+                "description": "Universal template optimized for Applicant Tracking Systems",
+                "best_for": "All technology professionals, high-volume applications",
+                "features": [
+                    "Single-column design",
+                    "Standard fonts",
+                    "Clear headings",
+                    "No graphics",
+                ],
+            },
+            "skills_forward": {
+                "name": "Skills-Forward Hybrid",
+                "description": "Prominent skills section with chronological work history",
+                "best_for": "Recent graduates, career changers, diverse backgrounds",
+                "features": [
+                    "Skills section at top",
+                    "Reverse-chronological history",
+                    "Transferable skills focus",
+                ],
+            },
+            "accomplishments": {
+                "name": "Accomplishments-Centric",
+                "description": "Heavy emphasis on measurable impact and achievements",
+                "best_for": "Mid-to-senior-level professionals with clear progression",
+                "features": [
+                    "Quantified achievements",
+                    "Strong action verbs",
+                    "Career story focus",
+                ],
+            },
+            "dual_column": {
+                "name": "Dual-Column Modern",
+                "description": "Structured two-column layout for high information density",
+                "best_for": "Candidates with many projects, skills, and certifications",
+                "features": [
+                    "Two-column format",
+                    "Visual balance",
+                    "High information density",
+                ],
+            },
+            "minimalist": {
+                "name": "Minimalist LaTeX/Plain-Text",
+                "description": "Clean, technical format favored by developers",
+                "best_for": "Software engineers, developers, data scientists",
+                "features": [
+                    "LaTeX/plain-text",
+                    "Technical elegance",
+                    "Function over form",
+                ],
+            },
+        }
 
     def extract_text_from_file(self, file_path: str) -> str:
         """
@@ -2901,28 +3165,11 @@ class SimpleResumeMatcher:
                 )
                 elapsed_time = time.time() - start_time
                 
-                # Clean the response to extract only the keywords
-                response_text = response["response"].strip()
-                
-                # Remove common prompt prefixes that LLMs sometimes include
-                prefixes_to_remove = [
-                    "Here is the list of extracted keywords:",
-                    "Here are the extracted keywords:",
-                    "Keywords:",
-                    "The keywords are:",
-                    "Extracted keywords:",
-                ]
-                
-                for prefix in prefixes_to_remove:
-                    if response_text.lower().startswith(prefix.lower()):
-                        response_text = response_text[len(prefix):].strip()
-                        break
-                
-                # Remove newlines and extra whitespace
-                response_text = " ".join(response_text.split())
+                # Clean the response using the centralized cleaning function
+                cleaned_response = self._clean_llm_response(response["response"], "keywords")
                 
                 # Split by commas and clean each keyword
-                keywords = [kw.strip() for kw in response_text.split(",")]
+                keywords = [kw.strip() for kw in cleaned_response.split(",")]
                 result = [kw for kw in keywords if kw and len(kw) > 2 and len(kw) < 50]  # Filter out very long keywords
                 
                 if result:
@@ -3062,7 +3309,7 @@ class SimpleResumeMatcher:
         self, resume_keywords: List[str], job_keywords: List[str]
     ) -> float:
         """
-        Calculate similarity between resume and job keywords.
+        Calculate similarity between resume and job keywords with improved matching.
 
         Args:
             resume_keywords: Keywords from resume
@@ -3074,14 +3321,53 @@ class SimpleResumeMatcher:
         if not resume_keywords or not job_keywords:
             return 0.0
 
-        # Simple Jaccard similarity
-        resume_set = set(resume_keywords)
-        job_set = set(job_keywords)
-
-        intersection = len(resume_set.intersection(job_set))
-        union = len(resume_set.union(job_set))
-
-        return intersection / union if union > 0 else 0.0
+        # Convert to lowercase for case-insensitive matching
+        resume_set = set([kw.lower() for kw in resume_keywords])
+        job_set = set([kw.lower() for kw in job_keywords])
+        
+        # Direct matches
+        direct_matches = resume_set.intersection(job_set)
+        
+        # Partial matches (one keyword contains another)
+        partial_matches = set()
+        for kw1 in resume_set:
+            for kw2 in job_set:
+                if kw1 in kw2 or kw2 in kw1:
+                    partial_matches.add(kw1)
+                    partial_matches.add(kw2)
+        
+        # Synonym matches
+        synonyms = {
+            "artificial intelligence": ["ai", "ai/ml", "machine learning", "ml"],
+            "machine learning": ["ai", "ai/ml", "artificial intelligence", "ml"],
+            "ai/ml": ["ai", "artificial intelligence", "machine learning", "ml"],
+            "computer architecture": ["architecture", "system architecture", "infrastructure design"],
+            "architecture design": ["computer architecture", "system architecture", "infrastructure design"],
+            "performance simulation": ["simulation", "performance", "modeling"],
+            "system optimization": ["optimization", "performance", "efficiency"],
+        }
+        
+        synonym_matches = set()
+        for kw1 in resume_set:
+            for kw2 in job_set:
+                # Check if either keyword has synonyms that match the other
+                for base_term, syns in synonyms.items():
+                    if (kw1 == base_term and kw2 in syns) or (kw2 == base_term and kw1 in syns):
+                        synonym_matches.add(kw1)
+                        synonym_matches.add(kw2)
+                    elif kw1 in syns and kw2 in syns:
+                        synonym_matches.add(kw1)
+                        synonym_matches.add(kw2)
+        
+        # Combine all matches
+        all_matches = direct_matches.union(partial_matches).union(synonym_matches)
+        
+        # Calculate similarity
+        union = resume_set.union(job_set)
+        if len(union) == 0:
+            return 0.0
+        
+        return len(all_matches) / len(union)
 
     def improve_resume(
         self,
